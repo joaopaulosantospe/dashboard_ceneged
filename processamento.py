@@ -1,114 +1,52 @@
 import pandas as pd
-from datetime import time
+import numpy as np
 
-def converter_para_horas(valor):
-    """Converte valores de tempo para horas decimais"""
-    if pd.isna(valor):
-        return 0
-
-    if isinstance(valor, time):
-        return valor.hour + valor.minute / 60 + valor.second / 3600
-
-    try:
-        td = pd.to_timedelta(str(valor))
-        return td.total_seconds() / 3600
-    except:
-        return 0
-
-
-def horas_para_tempo(horas):
-    """Converte horas decimais de volta para formato de tempo (HH:MM:SS)"""
-    if pd.isna(horas):
-        return "00:00:00"
-    
-    sinal = "-" if horas < 0 else ""
-    horas_abs = abs(horas)
-    
-    horas_int = int(horas_abs)
-    minutos = int((horas_abs - horas_int) * 60)
-    segundos = int(((horas_abs - horas_int) * 60 - minutos) * 60)
-    
-    return f"{sinal}{horas_int:02d}:{minutos:02d}:{segundos:02d}"
-
-
-def formatar_hora_time(valor):
-    """Formata valores de time para string HH:MM:SS"""
-    if pd.isna(valor):
-        return "00:00:00"
-    
-    if isinstance(valor, time):
-        return valor.strftime("%H:%M:%S")
-    
-    try:
-        # Tentar converter para timedelta e depois para string
-        td = pd.to_timedelta(str(valor))
-        total_seconds = int(td.total_seconds())
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        seconds = total_seconds % 60
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    except:
-        return str(valor)
-
+def horas_para_tempo(horas, incluir_segundos=False):
+    """Converte horas decimais para formato de tempo otimizado"""
+    if pd.isna(horas): return "00:00"
+    h = int(abs(horas))
+    m = int((abs(horas) - h) * 60)
+    return f"{h:02d}:{m:02d}"
 
 def preparar_dados(df):
-    """Prepara e processa os dados do DataFrame com alta performance"""
-    # 1. Converter data e horas usando vetores (muito mais rápido que .apply)
-    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-    
-    # Função vetorizada para converter tempo/string para horas decimais
-    def converter_vetorizado(series):
-        # Converte para timedelta (Pd.to_timedelta é otimizado)
-        td = pd.to_timedelta(series.astype(str), errors='coerce')
-        return td.dt.total_seconds() / 3600
+    """
+    Motor de processamento V16: Velocidade Exponencial.
+    O segredo é realizar a limpeza de textos (strings) apenas nos dados já reduzidos.
+    """
+    # 1. Conversão Temporal Vetorizada (Matemática pura, sem strings onde possível)
+    df["h_dec"] = pd.to_timedelta(df["Horas_Input"].astype(str), errors='coerce').dt.total_seconds() / 3600
+    df["i_dec"] = pd.to_timedelta(df["Intervalos_Input"].astype(str), errors='coerce').dt.total_seconds() / 3600
+    df["Data"] = pd.to_datetime(df["Data"], errors='coerce')
 
-    df["Hora_Decimal"] = converter_vetorizado(df["Hora_Evento"])
-    df["Intervalo_Decimal"] = converter_vetorizado(df["Intervalo"])
-    
-    # 2. Agrupamento eficiente para Início e Fim
-    agrupado = df.groupby(["Colaborador", "Data"], sort=False)
-    
-    tempos = agrupado["Hora_Decimal"].agg([
-        ("Hora_Inicio", "min"),
-        ("Hora_Final", "max")
-    ]).reset_index()
-    
-    # 3. Cálculo de intervalos otimizado
-    # Em vez de nlargest(3) por grupo (lento), ordenamos e pegamos os 3 primeiros
-    # Isso é drasticamente mais rápido em DataFrames grandes
-    df_sorted = df.sort_values(["Colaborador", "Data", "Intervalo_Decimal"], ascending=[True, True, False])
-    intervalos = df_sorted.groupby(["Colaborador", "Data"], sort=False)["Intervalo_Decimal"].head(3).groupby(["Colaborador", "Data"], sort=False).sum().reset_index(name="Intervalo_3_Maiores")
-    
-    # 4. Metadados (Rota, Regional, MRU) - pegamos o primeiro registro de cada dia de forma eficiente
-    metadados = df.groupby(["Colaborador", "Data"], sort=False).first().reset_index()[[
-        "Colaborador", "Data", "Rota", "Regional", "MRU", "Nome_MRU"
-    ]]
-    
-    # Mesclar tudo no DataFrame final
-    df_final = metadados.merge(tempos, on=["Colaborador", "Data"], how="left")
-    df_final = df_final.merge(intervalos, on=["Colaborador", "Data"], how="left")
-    
-    # 4. Cálculos de Horas
-    # Horas Brutas do Dia (Fim - Início)
-    df_final["Horas_Dia"] = df_final["Hora_Final"] - df_final["Hora_Inicio"]
-    
-    # Horas Líquidas (Brutas - Intervalos)
-    df_final["Horas_Liquidas"] = df_final["Horas_Dia"] - df_final["Intervalo_3_Maiores"]
-    
-    # Adicionar colunas formatadas para exibição
+    # 2. Agrupamento Instantâneo
+    # Aqui reduzimos, por exemplo, de 100.000 linhas para apenas 500 ou 1.000 (um por dia/colaborador)
+    df_final = df.groupby(["Colaborador", "Data"], sort=False).agg({
+        "h_dec": ["min", "max"],
+        "i_dec": lambda x: x.nlargest(3).sum(),
+        "Rota": "first",
+        "Regional": "first",
+        "MRU": "first"
+    }).reset_index()
+
+    # Nivelar as colunas
+    df_final.columns = ["Colaborador", "Data", "H_min", "H_max", "Intervalo_dec", "Rota", "Regional", "MRU"]
+
+    # 3. LIMPEZA DE TEXTO (Aqui é onde ganhamos a performance)
+    # Processar 500 strings é infinitamente mais rápido que processar 100.000
+    df_final["Colaborador"] = df_final["Colaborador"].fillna("Não Identificado").astype(str).str.strip()
+    df_final["MRU"] = df_final["MRU"].astype(str).str.replace(r"\.0$", "", regex=True).str.split("-").str[0].str.strip().str.zfill(8)
+
+    # 4. Cálculos Matemáticos Finais
+    df_final["Horas_Dias_dec"] = df_final["H_max"] - df_final["H_min"]
+    df_final["Horas_Liquidas"] = (df_final["Horas_Dias_dec"] - df_final["Intervalo_dec"]).clip(lower=0)
+    df_final["MRU_Completa"] = df_final["MRU"]
+
+    # 5. Formatação para exibição (Apenas dados finais)
     df_final["Data_Formatada"] = df_final["Data"].dt.strftime("%d/%m/%Y")
-    
-    # Formatação de Tempo HH:MM:SS
-    df_final["Hora_Inicio_Formatada"] = df_final["Hora_Inicio"].apply(horas_para_tempo)
-    df_final["Hora_Final_Formatada"] = df_final["Hora_Final"].apply(horas_para_tempo)
-    df_final["Horas_Dia_Formatada"] = df_final["Horas_Dia"].apply(horas_para_tempo)
-    df_final["Intervalo_Formatado"] = df_final["Intervalo_3_Maiores"].apply(horas_para_tempo)
-    df_final["Horas_Liquidas_Formatada"] = df_final["Horas_Liquidas"].apply(horas_para_tempo)
-    
-    # Criar coluna MRU_Completa para exibição (código + nome)
-    if 'Nome_MRU' in df_final.columns:
-        df_final["MRU_Completa"] = df_final["MRU"].astype(str) + " - " + df_final["Nome_MRU"].astype(str)
-    else:
-        df_final["MRU_Completa"] = df_final["MRU"].astype(str)
-    
+    df_final["Hora_inicio"] = df_final["H_min"].apply(horas_para_tempo)
+    df_final["Hora_Final"] = df_final["H_max"].apply(horas_para_tempo)
+    df_final["Horas_Dias"] = df_final["Horas_Dias_dec"].apply(horas_para_tempo)
+    df_final["Intervalo"] = df_final["Intervalo_dec"].apply(horas_para_tempo)
+    df_final["Horas_Trabalhadas"] = df_final["Horas_Liquidas"].apply(horas_para_tempo)
+
     return df_final

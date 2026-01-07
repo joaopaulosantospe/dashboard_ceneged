@@ -176,23 +176,54 @@ with st.sidebar:
 
 # ==================== FUNÇÕES COM CACHE ====================
 @st.cache_data(show_spinner=False)
-def carregar_e_processar_dados(arquivo_buffer):
-    """Função cacheada para leitura e processamento ultrarápido"""
-    with st.spinner('🚀 Otimizando e preparando dados...'):
-        df_raw = carregar_dados(arquivo_buffer)
-        df_proc = preparar_dados(df_raw)
-        return df_proc
+def carregar_dados_v16(arquivo_buffer):
+    """Função cacheada: Versão V16 - Motor de Performance Lazy (Redução antes da Limpeza)"""
+    df_raw = carregar_dados(arquivo_buffer)
+    df_proc = preparar_dados(df_raw)
+    return df_proc
 
 # ==================== PROCESSAMENTO DE DADOS ====================
 if arquivo:
+    # Interface de Carregamento Moderna
+    placeholder_loading = st.empty()
+    with placeholder_loading.container():
+        st.markdown("""
+            <div style="padding: 2rem; border-radius: 15px; background: rgba(118, 75, 162, 0.05); border: 1px solid rgba(118, 75, 162, 0.1); margin-bottom: 2rem;">
+                <div style="display: flex; align-items: center; gap: 1.5rem;">
+                    <div class="loader"></div>
+                    <div>
+                        <h3 style="margin: 0; color: #764ba2; font-family: 'Outfit', sans-serif;">Processando Inteligência de Dados...</h3>
+                        <p style="margin: 0; color: #666; font-size: 0.9rem;">Otimizando tabelas e gerando métricas de performance.</p>
+                    </div>
+                </div>
+            </div>
+            <style>
+                .loader {
+                    width: 48px;
+                    height: 48px;
+                    border: 5px solid #FFF;
+                    border-bottom-color: #764ba2;
+                    border-radius: 50%;
+                    display: inline-block;
+                    box-sizing: border-box;
+                    animation: rotation 1s linear infinite;
+                }
+                @keyframes rotation {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
+        """, unsafe_allow_html=True)
+
     try:
-        # Carregar e processar dados com cache de alta performance
-        df = carregar_e_processar_dados(arquivo)
+        # Carregar e processar com cache V16
+        df = carregar_dados_v16(arquivo)
+            
+        # Limpar tela de load após sucesso
+        placeholder_loading.empty()
         
-        # Garantir limpeza da MRU (Camada extra de segurança caso o cache seja antigo)
-        if "MRU" in df.columns:
-            df["MRU"] = df["MRU"].astype(str).str.split('-').str[0].str.strip().str.zfill(8)
     except Exception as e:
+        placeholder_loading.empty()
         st.error(f"❌ Erro ao processar o arquivo: {e}")
         st.stop()
     
@@ -408,37 +439,33 @@ if arquivo:
             mru_top_data = mru_top_data.sort_values("MRU_Completa", ascending=True).head(10)
             mru_top_data['Tempo_HHMMSS'] = mru_top_data['Horas_Liquidas'].apply(horas_para_tempo)
             
+            # Garantir que MRU seja tratada como string/categoria para evitar problemas de escala numérica
+            mru_top_data['MRU_Label'] = mru_top_data['MRU'].astype(str)
+            
             fig_top_mru = px.bar(
                 mru_top_data,
-                x="MRU_Completa", # Usar a original para manter a separação das barras
+                x="MRU_Label",
                 y="Horas_Liquidas",
                 text="Tempo_HHMMSS",
                 color="Horas_Liquidas",
                 color_continuous_scale="Sunsetdark",
-                labels={"Horas_Liquidas": "Horas Líquidas", "MRU_Completa": "MRU"}
+                labels={"Horas_Liquidas": "Horas Líquidas", "MRU_Label": "MRU"}
             )
             
-            # Ajustar labels do eixo X para mostrar apenas o código (limpar o " - 1")
-            fig_top_mru.update_layout(
-                xaxis=dict(
-                    tickmode='array',
-                    tickvals=mru_top_data["MRU_Completa"],
-                    ticktext=mru_top_data["MRU"]
-                )
-            )
-
             fig_top_mru.update_traces(
                 textposition='outside',
                 cliponaxis=False,
-                hovertemplate="<b>MRU Completa:</b> %{x}<br><b>Horas Trabalhadas:</b> %{text}<extra></extra>"
+                hovertemplate="<b>MRU:</b> %{x}<br><b>Horas Trabalhadas:</b> %{text}<extra></extra>"
             )
-            # Aumentar margem superior para o texto não cortar e definir range do eixo Y
+            
+            # Forçar o eixo X como categoria para as barras ficarem juntas e organizadas
             max_y = mru_top_data['Horas_Liquidas'].max() * 1.2
             fig_top_mru.update_layout(
                 height=450, 
                 coloraxis_showscale=False, 
-                xaxis_title="", 
+                xaxis_title="MRU", 
                 yaxis_title="Horas Líquidas",
+                xaxis_type='category',
                 yaxis=dict(range=[0, max_y]),
                 margin=dict(t=50)
             )
@@ -616,8 +643,7 @@ if arquivo:
     
     df_exibicao = df_filtrado[[
         "Data_Formatada", "Colaborador", "Rota", "Regional", "MRU",
-        "Hora_Inicio_Formatada", "Hora_Final_Formatada",
-        "Horas_Dia_Formatada", "Intervalo_Formatado", "Horas_Liquidas_Formatada"
+        "Hora_inicio", "Hora_Final", "Horas_Dias", "Intervalo", "Horas_Trabalhadas"
     ]].copy()
     
     df_exibicao.columns = [
@@ -637,7 +663,7 @@ if arquivo:
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_export = df_filtrado[[
                 "Data", "Colaborador", "Rota", "Regional", "MRU",
-                "Hora_Inicio", "Hora_Final", "Horas_Dia", "Intervalo_3_Maiores", "Horas_Liquidas"
+                "Hora_inicio", "Hora_Final", "Horas_Dias", "Intervalo", "Horas_Trabalhadas"
             ]].copy()
             df_export.columns = ["Data", "Colaborador", "Rota", "Regional", "MRU", "Hora Início", "Hora Final", "Total Bruto", "Intervalo", "Horas Líquidas"]
             df_export.to_excel(writer, index=False, sheet_name='Dashboard')
@@ -711,25 +737,31 @@ else:
     # ==================== TELA INICIAL ====================
     st.markdown("---")
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([0.5, 5, 0.5])
     
     with col2:
-        st.info("""
-        ### 👋 Bem-vindo ao Dashboard de Horas Trabalhadas!
-        
-        Para começar, faça o upload do arquivo Excel na barra lateral.
-        
-        **Recursos disponíveis:**
-        - 📊 Visualizações interativas e profissionais
-        - 🔍 Filtros avançados por período, colaborador, rota, regional e MRU
-        - 📈 Gráficos dinâmicos com Plotly
-        - 💾 Exportação formatada para Excel e CSV
-        - 📱 Layout responsivo e elegante
-        - 🎨 Design moderno com gradientes e animações
-        
-        **Instruções:**
-        1. Clique em "Browse files" na barra lateral
-        2. Selecione seu arquivo Excel (.xlsx)
-        3. Aguarde o processamento
-        4. Explore os dados com os filtros e gráficos!
-        """)
+        st.markdown('''
+<div style="background-color: #e1f5fe; padding: 20px; border-radius: 10px; border-left: 5px solid #03a9f4;">
+<div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+<h3 style="margin: 0; color: #01579b;">👋 Bem-vindo ao Dashboard de Horas Trabalhadas!</h3>
+</div>
+<br>
+<p style="color: #0277bd; margin-bottom: 10px;">Para começar, faça o upload do arquivo Excel na barra lateral.</p>
+<b style="color: #01579b;">Recursos disponíveis:</b>
+<ul style="color: #0277bd; margin-top: 5px;">
+<li>📊 Visualizações interativas e profissionais</li>
+<li>🔍 Filtros avançados por período, colaborador, rota, regional e MRU</li>
+<li>📈 Gráficos dinâmicos com Plotly</li>
+<li>💾 Exportação formatada para Excel e CSV</li>
+<li>📱 Layout responsivo e elegante</li>
+<li>🎨 Design moderno com gradientes e animações</li>
+</ul>
+<b style="color: #01579b;">Instruções:</b>
+<ol style="color: #0277bd; margin-top: 5px;">
+<li>Clique em "Browse files" na barra lateral</li>
+<li>Selecione seu arquivo Excel (.xlsx)</li>
+<li>Aguarde o processamento</li>
+<li>Explore os dados com os filtros e gráficos!</li>
+</ol>
+</div>
+''', unsafe_allow_html=True)
