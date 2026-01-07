@@ -764,5 +764,7 @@ else:
 <li>Explore os dados com os filtros e gráficos!</li>
 </ol>
 </div>
-''', unsafe_allow_html=True)#   T r i g g e r   d e p l o y m e n t   u p d a t e  
- 
+''', unsafe_allow_html=True)
+
+# Link do repositorio para controle interno
+# joaopaulosantospe/dashboard_horas
