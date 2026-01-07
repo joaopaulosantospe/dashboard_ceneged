@@ -176,8 +176,8 @@ with st.sidebar:
 
 # ==================== FUNÇÕES COM CACHE ====================
 @st.cache_data(show_spinner=False)
-def carregar_dados_v16(arquivo_buffer):
-    """Função cacheada: Versão V16 - Motor de Performance Lazy (Redução antes da Limpeza)"""
+def carregar_dados_v17(arquivo_buffer):
+    """Função cacheada: Versão V17 - Busca Inteligente de Colunas e Motor Ultra-Fast"""
     df_raw = carregar_dados(arquivo_buffer)
     df_proc = preparar_dados(df_raw)
     return df_proc
@@ -216,8 +216,8 @@ if arquivo:
         """, unsafe_allow_html=True)
 
     try:
-        # Carregar e processar com cache V16
-        df = carregar_dados_v16(arquivo)
+        # Carregar e processar com cache V17
+        df = carregar_dados_v17(arquivo)
             
         # Limpar tela de load após sucesso
         placeholder_loading.empty()
