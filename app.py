@@ -5,55 +5,28 @@ import plotly.graph_objects as go
 from datetime import datetime
 from leitura_excel import carregar_dados
 from processamento import preparar_dados, horas_para_tempo
-import io
+import gc
 
 # ==================== CONFIGURAÇÃO DA PÁGINA ====================
-st.set_page_config(
-    page_title="Dashboard de Horas Trabalhadas",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Dashboard Horas V20", page_icon="📊", layout="wide")
 
-# ==================== ESTILOS CUSTOMIZADOS ====================
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;800&display=swap');
     
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-    }
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     
     .header-container {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 3rem 1rem;
-        border-radius: 20px;
-        margin-bottom: 3rem;
-        box-shadow: 0 15px 35px rgba(118, 75, 162, 0.2);
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        padding: 2.5rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
         text-align: center;
+        color: white;
     }
     
-    .main-title {
-        font-family: 'Outfit', sans-serif;
-        font-size: 3.5rem !important;
-        font-weight: 800 !important;
-        color: white !important;
-        margin: 0 !important;
-    }
+    .main-title { font-family: 'Outfit', sans-serif; font-size: 3rem !important; margin: 0; }
     
-    .subtitle {
-        color: rgba(255, 255, 255, 0.9) !important;
-        font-size: 1.25rem !important;
-    }
-    
-    .section-header {
-        font-size: 1.5rem;
-        font-weight: 600;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-        color: #2c3e50;
-    }
-
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     .stAppDeployButton {display: none;}
@@ -64,131 +37,104 @@ st.markdown("""
 st.markdown("""
     <div class="header-container">
         <h1 class="main-title">📊 Dashboard de Horas Trabalhadas</h1>
-        <p class="subtitle">Análise profissional e detalhada de produtividade</p>
+        <p style="opacity: 0.8;">Versão V20 - Alta Performance & Estabilidade</p>
     </div>
 """, unsafe_allow_html=True)
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
-    st.markdown("### 📂 Upload de Dados")
-    arquivo = st.file_uploader(
-        "Selecione o arquivo Excel",
-        type=["xlsx"],
-        help="Faça upload do arquivo de horas trabalhadas"
-    )
+    st.markdown("### 📂 Gestão de Dados")
+    arquivo = st.file_uploader("Suba seu Excel (.xlsx)", type=["xlsx"])
     
     if arquivo:
-        st.success("✅ Arquivo pronto para análise!")
+        st.success("✅ Arquivo detectado.")
 
-# ==================== MOTOR DE DADOS (CACHE) ====================
-@st.cache_data(show_spinner=False)
-def carregar_dados_v19(arquivo_buffer):
-    """Versão V19: Máxima Estabilidade e Memória Controlada"""
-    try:
-        df_raw = carregar_dados(arquivo_buffer)
-        df_proc = preparar_dados(df_raw)
-        return df_proc
-    except Exception as e:
-        return f"ERRO_PROCESSAMENTO: {str(e)}"
-
-# ==================== FLUXO PRINCIPAL ====================
+# ==================== CARREGAMENTO (SEM CACHE GLOBAL PARA ECONOMIZAR RAM) ====================
 if arquivo:
-    placeholder_loading = st.empty()
-    with placeholder_loading.container():
-        st.markdown('''
-            <div style="padding: 2rem; border-radius: 15px; background: rgba(118, 75, 162, 0.05); border: 1px solid rgba(118, 75, 162, 0.1); margin-bottom: 2rem;">
-                <h3 style="color: #764ba2; margin: 0;">🚀 Processando Dados...</h3>
-                <p style="color: #666;">Otimizando tabelas para grandes volumes.</p>
-            </div>
-        ''', unsafe_allow_html=True)
+    # Carregamento local para não saturar a RAM do servidor com cache
+    placeholder = st.empty()
+    with placeholder.container():
+        st.info("⚙️ Processando seu arquivo... (Otimizando memória)")
+    
+    try:
+        # Carregamos e processamos
+        df_raw = carregar_dados(arquivo)
+        df = preparar_dados(df_raw)
+        
+        # Limpeza manual pós-processamento
+        del df_raw
+        gc.collect()
+        
+        placeholder.empty()
 
-    df = carregar_dados_v19(arquivo)
-    placeholder_loading.empty()
+        # --- FILTROS ---
+        with st.sidebar:
+            st.markdown("---")
+            st.markdown("### 🔍 Filtros Ativos")
+            
+            # Período
+            d_min, d_max = df["Data"].min().date(), df["Data"].max().date()
+            col_d1, col_d2 = st.columns(2)
+            with col_d1: data_i = st.date_input("Início", value=d_min)
+            with col_d2: data_f = st.date_input("Fim", value=d_max)
+            
+            # Filtros dinâmicos
+            rotas = ["Todas"] + sorted(df["Rota"].unique().tolist())
+            rota_sel = st.multiselect("Filtrar Rota", rotas, default=["Todas"])
+            
+            # Colaboradores (dependente da rota)
+            df_view = df if "Todas" in rota_sel else df[df["Rota"].isin(rota_sel)]
+            colabs = ["Todos"] + sorted(df_view["Colaborador"].unique().tolist())
+            colab_sel = st.selectbox("Filtrar Colaborador", colabs)
 
-    if isinstance(df, str) and df.startswith("ERRO"):
-        st.error(f"❌ Falha crítica no processamento: {df}")
-        st.stop()
+        # --- APLICAÇÃO DOS FILTROS ---
+        mask = (df["Data"].dt.date >= data_i) & (df["Data"].dt.date <= data_f)
+        if colab_sel != "Todos": mask &= (df["Colaborador"] == colab_sel)
+        if "Todas" not in rota_sel: mask &= (df["Rota"].isin(rota_sel))
+        
+        df_f = df[mask].copy()
 
-    # --- FILTROS ---
-    with st.sidebar:
+        # --- CONTEÚDO ---
+        c1, c2, c3 = st.columns(3)
+        with c1: st.metric("Média Geral de Horas", horas_para_tempo(df_f["Horas_Liquidas"].mean()))
+        with c2: st.metric("Total de Colaboradores", df_f["Colaborador"].nunique())
+        with c3: st.metric("Total de Registros", len(df_f))
+
         st.markdown("---")
-        st.markdown("### 🔍 Filtros")
         
-        data_min = df["Data"].min().date()
-        data_max = df["Data"].max().date()
+        tab1, tab2 = st.tabs(["� Gráficos", "� Tabela de Dados"])
         
-        col_d1, col_d2 = st.columns(2)
-        with col_d1: data_inicio = st.date_input("De", value=data_min)
-        with col_d2: data_fim = st.date_input("Até", value=data_max)
-        
-        rotas = ["Todas"] + sorted(df["Rota"].unique().tolist())
-        rota_sel = st.multiselect("Rotas", rotas, default=["Todas"])
-        
-        # Filtro dinâmico de colaborador baseado na rota
-        df_temp = df if "Todas" in rota_sel else df[df["Rota"].isin(rota_sel)]
-        colabs = ["Todos"] + sorted(df_temp["Colaborador"].unique().tolist())
-        colab_sel = st.selectbox("Colaborador", colabs)
-
-        mrus = ["Todas"] + sorted(df_temp["MRU"].unique().tolist())
-        mru_sel = st.multiselect("MRUs", mrus, default=["Todas"])
-
-        if st.button("🔄 Limpar Tudo", use_container_width=True):
-            st.rerun()
-
-    # --- APLICAR FILTROS ---
-    mask = (df["Data"].dt.date >= data_inicio) & (df["Data"].dt.date <= data_fim)
-    if colab_sel != "Todos": mask &= (df["Colaborador"] == colab_sel)
-    if "Todas" not in rota_sel: mask &= (df["Rota"].isin(rota_sel))
-    if "Todas" not in mru_sel: mask &= (df["MRU"].isin(mru_sel))
-    
-    df_filtrado = df[mask].copy()
-
-    # --- MÉTRICAS ---
-    st.markdown('<div class="section-header">📊 Resumo de Performance</div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric("👤 Média Colaborador", horas_para_tempo(df_filtrado.groupby('Colaborador')['Horas_Liquidas'].mean().mean()))
-    with c2: st.metric("🗺️ Média Rota", horas_para_tempo(df_filtrado.groupby('Rota')['Horas_Liquidas'].mean().mean()))
-    with c3: st.metric("🏢 Média Regional", horas_para_tempo(df_filtrado.groupby('Regional')['Horas_Liquidas'].mean().mean()))
-    with c4: st.metric("📍 Média MRU", horas_para_tempo(df_filtrado.groupby('MRU')['Horas_Liquidas'].mean().mean()))
-
-    # --- GRÁFICOS ---
-    tab1, tab2, tab3 = st.tabs(["🚀 Visão Geral", "👥 Colaboradores", "📅 Tabela Detalhada"])
-    
-    with tab1:
-        col_g1, col_g2 = st.columns(2)
-        with col_g1:
-            # Distribuição
-            mru_medias = df_filtrado.groupby("MRU")["Horas_Liquidas"].mean().reset_index()
-            fig_dist = px.histogram(mru_medias, x="Horas_Liquidas", nbins=20, title="Distribuição de Horas por MRU", color_discrete_sequence=['#764ba2'])
-            st.plotly_chart(fig_dist, use_container_width=True)
-        
-        with col_g2:
-            # Gauge Eficiência
-            perc = (mru_medias["Horas_Liquidas"] >= 8).mean() * 100
-            fig_gauge = go.Figure(go.Indicator(
+        with tab1:
+            # Gráfico de Ranking
+            colab_avg = df_f.groupby("Colaborador")["Horas_Liquidas"].mean().sort_values(ascending=False).reset_index().head(20)
+            fig = px.bar(colab_avg, x="Colaborador", y="Horas_Liquidas", 
+                         title="Top 20 Colaboradores - Média de Horas",
+                         color="Horas_Liquidas", color_continuous_scale="Blues")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Gauge de Eficiência
+            perc = (df_f["Horas_Liquidas"] >= 8).mean() * 100
+            fig_g = go.Figure(go.Indicator(
                 mode="gauge+number", value=perc,
-                title={'text': "Efetividade (>= 8h)"},
-                gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#764ba2"}}
+                title={'text': "% de Jornadas >= 08:00"},
+                gauge={'axis': {'range': [0, 100]}, 'bar': {'color': "#1e3c72"}}
             ))
-            st.plotly_chart(fig_gauge, use_container_width=True)
+            st.plotly_chart(fig_g, use_container_width=True)
 
-    with tab2:
-        colab_rank = df_filtrado.groupby("Colaborador")["Horas_Liquidas"].mean().sort_values(ascending=False).reset_index()
-        fig_rank = px.bar(colab_rank, x="Colaborador", y="Horas_Liquidas", title="Ranking de Jornada Média", color="Horas_Liquidas", color_continuous_scale="Sunsetdark")
-        st.plotly_chart(fig_rank, use_container_width=True)
+        with tab2:
+            st.dataframe(df_f[["Data_Formatada", "Colaborador", "Rota", "MRU", "Horas_Trabalhadas"]], hide_index=True, use_container_width=True)
+            
+            # Botão de Download CSV
+            csv = df_f.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Exportar Resultados (CSV)", data=csv, file_name="relatorio_horas.csv")
 
-    with tab3:
-        st.dataframe(df_filtrado[["Data_Formatada", "Colaborador", "Rota", "MRU", "Horas_Trabalhadas"]], use_container_width=True, hide_index=True)
-        
-        csv = df_filtrado.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Baixar Dados (CSV)", data=csv, file_name="relatorio_horas.csv", mime="text/csv")
+    except Exception as e:
+        st.error(f"❌ Erro ao processar arquivo: {str(e)}")
+        st.info("Dica: Verifique se o arquivo Excel está no formato correto e se não está corrompido.")
 
 else:
-    # --- TELA INICIAL ---
+    # Tela de espera
     st.markdown("---")
-    st.info("👋 Bem-vindo! Para começar, suba o arquivo Excel na barra lateral esquerda.")
-    st.markdown("""
-        1. Localize o arquivo de horas.
-        2. Aguarde a análise automática.
-        3. Utilize os filtros para detalhar sua visão.
-    """)
+    st.warning("👈 Por favor, carregue um arquivo Excel na barra lateral para ver as análises.")
+    
+    st.image("https://img.freepik.com/free-vector/dashboard-interface-concept-illustration_114360-3162.jpg", width=400)
