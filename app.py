@@ -176,8 +176,8 @@ with st.sidebar:
 
 # ==================== FUNÇÕES COM CACHE ====================
 @st.cache_data(show_spinner=False)
-def carregar_dados_v17(arquivo_buffer):
-    """Função cacheada: Versão V17 - Busca Inteligente de Colunas e Motor Ultra-Fast"""
+def carregar_dados_v18(arquivo_buffer):
+    """Função cacheada: Versão V18 - Arquitetura de Memória Otimizada para Arquivos Grandes"""
     df_raw = carregar_dados(arquivo_buffer)
     df_proc = preparar_dados(df_raw)
     return df_proc
@@ -192,8 +192,8 @@ if arquivo:
                 <div style="display: flex; align-items: center; gap: 1.5rem;">
                     <div class="loader"></div>
                     <div>
-                        <h3 style="margin: 0; color: #764ba2; font-family: 'Outfit', sans-serif;">Processando Inteligência de Dados...</h3>
-                        <p style="margin: 0; color: #666; font-size: 0.9rem;">Otimizando tabelas e gerando métricas de performance.</p>
+                        <h3 style="margin: 0; color: #764ba2; font-family: 'Outfit', sans-serif;">Analisando Grandes Volumes...</h3>
+                        <p style="margin: 0; color: #666; font-size: 0.9rem;">Otimizando memória e processando métricas em tempo real.</p>
                     </div>
                 </div>
             </div>
@@ -216,8 +216,8 @@ if arquivo:
         """, unsafe_allow_html=True)
 
     try:
-        # Carregar e processar com cache V17
-        df = carregar_dados_v17(arquivo)
+        # Carregar e processar com cache V18
+        df = carregar_dados_v18(arquivo)
             
         # Limpar tela de load após sucesso
         placeholder_loading.empty()
