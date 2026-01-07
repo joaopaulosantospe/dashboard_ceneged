@@ -367,8 +367,7 @@ if arquivo:
         faixas_counts.columns = ['Faixa', 'Quantidade']
         faixas_counts['Percentual'] = (faixas_counts['Quantidade'] / faixas_counts['Quantidade'].sum() * 100).fillna(0)
         
-        faixas_counts = faixas_counts[faixas_counts['Quantidade'] > 0]
-        
+        # Não filtrar Quantidade > 0 para que todas as faixas (incluindo 12h+) apareçam no gráfico
         if not faixas_counts.empty:
             fig_faixas = px.bar(
                 faixas_counts,
