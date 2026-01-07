@@ -141,14 +141,18 @@ st.markdown("""
     /* Esconder o menu, o footer, o botão de Deploy e o toolbar do Streamlit */
     #MainMenu {visibility: hidden; display: none !important;}
     footer {visibility: hidden; display: none !important;}
-    .stAppDeployButton {display: none !important;}
     header {visibility: hidden; display: none !important;}
-    [data-testid="stToolbar"] {visibility: hidden; display: none !important;}
+    .stAppDeployButton {display: none !important;}
+    [data-testid="stAppDeployButton"] {display: none !important;}
+    [data-testid="stHeader"] {display: none !important;}
+    [data-testid="stToolbar"] {display: none !important;}
     [data-testid="stStatusWidget"] {display: none !important;}
+    [data-testid="stDecoration"] {display: none !important;}
     .embeddedAppMeta {display: none !important;}
     .viewerBadge_container__16S6W {display: none !important;}
     .styles_viewerBadge__3777_ {display: none !important;}
-    [data-testid="stHeader"] {display: none !important;}
+    div[class^="viewerBadge"] {display: none !important;}
+    button[title="Deploy"] {display: none !important;}
     
     /* Seções */
     .section-header {
