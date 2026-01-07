@@ -4,4 +4,3 @@ openpyxl
 plotly
 xlsxwriter
 python-calamine
-pyarrow
