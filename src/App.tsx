@@ -464,12 +464,11 @@ export default function App() {
             };
         }).sort((a, b) => b.avg - a.avg);
 
-        // 4. Top 10 MRU (A-Z)
+        // 4. Top 10 MRU - High to Low
         const topMRUs = filteredData
             .filter(d => d.horas_liquidas_dec >= 8)
             .sort((a, b) => b.horas_liquidas_dec - a.horas_liquidas_dec)
             .slice(0, 10)
-            .sort((a, b) => a.mru.localeCompare(b.mru))
             .map(d => ({
                 name: d.mru,
                 valor: d.horas_liquidas_dec,
@@ -477,9 +476,9 @@ export default function App() {
             }));
 
         // 5. Por Rota e Regional
-        const groupStats = (key: keyof ProcessedRow) => {
+        const groupStats = (key: keyof ProcessedRow, context: ProcessedRow[]) => {
             const map = new Map<string, number[]>();
-            filteredData.forEach(d => {
+            context.forEach(d => {
                 const val = String(d[key]);
                 if (!map.has(val)) map.set(val, []);
                 map.get(val)!.push(d.horas_liquidas_dec);
@@ -490,8 +489,8 @@ export default function App() {
             }).sort((a, b) => b.avg - a.avg);
         };
 
-        const rotasData = groupStats('rota');
-        const regionaisData = groupStats('regional');
+        const rotasData = groupStats('rota', filteredData);
+        const regionaisData = groupStats('regional', filteredData);
 
         // 6. Evolução Diária
         const evolucaoMap = new Map<number, number[]>();
@@ -534,18 +533,10 @@ export default function App() {
             };
         });
 
-        // 8. Regiões Específicas (Agreste e Sertão)
+        // 8. Regiões Específicas (Agreste e Sertão) - Devem respeitar os filtros
         const getGroupedDataByRegions = (names: string[], groupBy: 'rota' | 'colaborador') => {
             const map = new Map<string, number[]>();
-            data.filter(d => {
-                if (startDate && endDate) {
-                    if (!isWithinInterval(d.data, {
-                        start: startOfDay(new Date(startDate + 'T00:00:00')),
-                        end: endOfDay(new Date(endDate + 'T23:59:59'))
-                    })) return false;
-                }
-                return true;
-            }).forEach(d => {
+            filteredData.forEach(d => {
                 const reg = String(d.regional).toUpperCase().trim();
                 const key = d[groupBy];
                 if (names.some(n => reg.includes(n))) {
