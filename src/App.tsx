@@ -14,7 +14,10 @@ import {
     ChevronDown,
     Search,
     Filter,
-    Check
+    Check,
+    Database,
+    FileText,
+    CheckCircle2
 } from 'lucide-react';
 import {
     BarChart,
@@ -208,16 +211,81 @@ const MetricCard = ({ title, value, icon: Icon, delay = 0, color = 'bg-brand-pur
 );
 
 const LoadingOverlay = () => (
-    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
         <div className="relative">
-            <div className="w-24 h-24 border-4 border-white/20 border-t-brand-purple rounded-full animate-spin"></div>
+            <div className="w-24 h-24 border-4 border-white/10 border-t-brand-purple rounded-full animate-spin"></div>
             <div className="absolute inset-0 flex items-center justify-center">
-                <BarChart3 className="text-white animate-pulse" size={32} />
+                <RefreshCw className="text-white animate-spin ring-offset-current" size={32} />
             </div>
         </div>
-        <h3 className="mt-8 text-2xl font-bold text-white font-outfit animate-pulse">Processando Dados...</h3>
-        <p className="text-white/60 mt-2 text-sm">Isso pode levar alguns instantes para arquivos grandes.</p>
+        <h3 className="mt-8 text-2xl font-bold text-white font-outfit animate-pulse tracking-tight">Analisando Arquivos...</h3>
+        <p className="text-white/40 mt-2 text-sm font-medium uppercase tracking-widest">Aguarde um instante</p>
     </div>
+);
+
+const SuccessModal = ({ stats, onClose }: { stats: any, onClose: () => void }) => (
+    <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[110] flex items-center justify-center bg-brand-dark/90 backdrop-blur-lg p-4"
+    >
+        <motion.div
+            initial={{ scale: 0.9, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl relative overflow-hidden"
+        >
+            <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-brand-purple to-amber-500"></div>
+
+            <div className="flex flex-col items-center text-center">
+                <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                    <CheckCircle2 className="text-emerald-500" size={40} />
+                </div>
+
+                <h2 className="text-3xl font-black text-brand-dark mb-2 font-outfit">Processamento Concluído!</h2>
+                <p className="text-gray-500 mb-8 font-medium">Os dados foram importados com sucesso.</p>
+
+                <div className="grid grid-cols-1 gap-4 w-full mb-8">
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex justify-between items-center group hover:border-brand-purple/30 transition-colors">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-white rounded-lg shadow-sm">
+                                <FileText size={18} className="text-brand-purple" />
+                            </div>
+                            <span className="text-gray-600 font-bold text-sm">Linhas lidas</span>
+                        </div>
+                        <span className="text-brand-dark font-black text-lg">{stats.totalOriginal.toLocaleString()}</span>
+                    </div>
+
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex justify-between items-center group hover:border-emerald-500/30 transition-colors">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-white rounded-lg shadow-sm">
+                                <Check size={18} className="text-emerald-500" />
+                            </div>
+                            <span className="text-gray-600 font-bold text-sm">Linhas válidas</span>
+                        </div>
+                        <span className="text-brand-dark font-black text-lg">{stats.totalValid.toLocaleString()}</span>
+                    </div>
+
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex justify-between items-center group hover:border-amber-500/30 transition-colors">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-white rounded-lg shadow-sm">
+                                <Database size={18} className="text-amber-500" />
+                            </div>
+                            <span className="text-gray-600 font-bold text-sm">Registros Dashboard</span>
+                        </div>
+                        <span className="text-brand-dark font-black text-lg">{stats.mergedCount.toLocaleString()}</span>
+                    </div>
+                </div>
+
+                <button
+                    onClick={onClose}
+                    className="w-full py-4 bg-brand-purple text-white rounded-2xl font-black text-lg hover:bg-brand-purple/90 transition-all shadow-xl shadow-brand-purple/20 active:scale-95"
+                >
+                    Acessar Dashboard
+                </button>
+            </div>
+        </motion.div>
+    </motion.div>
 );
 
 const TabButton = ({ active, onClick, children, icon: Icon }: any) => (
@@ -250,6 +318,10 @@ export default function App() {
     const [selectedColaborador, setSelectedColaborador] = useState('Todos');
     const [selectedMRUs, setSelectedMRUs] = useState<string[]>(['Todas']);
     const [selectedPerfil, setSelectedPerfil] = useState('Todos');
+    const [tableSearch, setTableSearch] = useState('');
+    const [tableLimit, setTableLimit] = useState(50);
+    const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [uploadStats, setUploadStats] = useState<any>(null);
 
     // Carregar dados persistidos ao iniciar
     useEffect(() => {
@@ -259,10 +331,20 @@ export default function App() {
                 const persisted = await get('dashboard_data');
                 if (persisted && Array.isArray(persisted)) {
                     // Converter datas de volta para objetos Date (IndexedDB armazena como Date ou string dependendo da versão)
-                    const restored = persisted.map(item => ({
-                        ...item,
-                        data: new Date(item.data)
-                    }));
+                    const restored = persisted.map(item => {
+                        const dt = new Date(item.data);
+                        // Se a data carregada parece ter sido "shiftada" para UTC (meia-noite UTC), 
+                        // nós a forçamos de volta para a meia-noite local.
+                        const isMidnightUTC = dt.getUTCHours() === 0 && dt.getUTCMinutes() === 0;
+                        const restoredDate = isMidnightUTC
+                            ? new Date(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate())
+                            : dt;
+
+                        return {
+                            ...item,
+                            data: restoredDate
+                        };
+                    });
                     setData(restored);
 
                     // Reaplicar datas automáticas
@@ -287,20 +369,30 @@ export default function App() {
         setLoading(true);
         try {
             const filesArray = Array.from(files);
-            const allProcessedResults: ProcessedRow[][] = await Promise.all(
+            const results = await Promise.all(
                 filesArray.map(file => processData(file))
             );
 
             // Mesclar todos os resultados em um único array
-            const mergedData = allProcessedResults.flat();
+            const mergedData = results.map(r => r.data).flat();
+            const totalOriginal = results.reduce((acc, r) => acc + (r.stats?.originalLines || 0), 0);
+            const totalValid = results.reduce((acc, r) => acc + (r.stats?.validLines || 0), 0);
 
             // Ordenar por data para garantir consistência
             mergedData.sort((a, b) => a.data.getTime() - b.data.getTime() || a.colaborador.localeCompare(b.colaborador));
 
-            // Salvar no IndexedDB (Suporta arquivos imensos de até dezenas de GB)
+            // Salvar no IndexedDB
             await set('dashboard_data', mergedData);
-
             setData(mergedData);
+
+            if (totalOriginal > 0) {
+                setUploadStats({
+                    totalOriginal,
+                    totalValid,
+                    mergedCount: mergedData.length
+                });
+                setShowSuccessModal(true);
+            }
 
             // Auto-set dates based on data
             if (mergedData.length > 0) {
@@ -380,6 +472,21 @@ export default function App() {
             return true;
         });
     }, [data, startDate, endDate, selectedRotas, selectedRegionais, selectedColaborador, selectedMRUs, selectedPerfil]);
+
+    // Filtro específico para a tabela (Pesquisa Local)
+    const tableDataFiltered = useMemo(() => {
+        if (!tableSearch) return filteredData;
+        const term = tableSearch.toLowerCase().trim();
+        return filteredData.filter(row =>
+            row.colaborador.toLowerCase().includes(term) ||
+            row.mru.toLowerCase().includes(term) ||
+            row.rota.toLowerCase().includes(term) ||
+            row.regional.toLowerCase().includes(term) ||
+            row.data_formatada.includes(term) ||
+            row.hora_inicio.includes(term) ||
+            row.hora_final.includes(term)
+        );
+    }, [filteredData, tableSearch]);
 
     // Métricas
     const stats = useMemo(() => {
@@ -583,6 +690,7 @@ export default function App() {
                 'Rota': row.rota,
                 'Regional': row.regional,
                 'MRU': row.mru,
+                'Registros': row.registros,
                 'Hora Início': row.hora_inicio,
                 'Hora Final': row.hora_final,
                 'Total Bruto': row.total_bruto,
@@ -1170,62 +1278,101 @@ export default function App() {
                                     )}
 
                                     {activeTab === 'tabela' && (
-                                        <motion.div key="table" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="overflow-x-auto">
-                                            <div className="flex justify-between items-center mb-6">
-                                                <h3 className="text-xl font-bold">Registros Detalhados</h3>
-                                                <div className="flex gap-2">
-                                                    <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-green-700 transition-colors">
-                                                        <Download size={16} /> Excel
+                                        <motion.div key="table" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gray-50/50 p-4 rounded-2xl border border-gray-100">
+                                                <div>
+                                                    <h3 className="text-xl font-bold flex items-center gap-2">
+                                                        <Database size={20} className="text-brand-purple" />
+                                                        Registros Detalhados
+                                                    </h3>
+                                                    <p className="text-xs text-gray-500 mt-1 uppercase tracking-wider font-semibold">
+                                                        Total filtrado: {tableDataFiltered.length.toLocaleString()} registros
+                                                    </p>
+                                                </div>
+
+                                                <div className="flex flex-wrap gap-3 w-full md:w-auto">
+                                                    <div className="relative flex-1 md:w-64">
+                                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                                                        <input
+                                                            type="text"
+                                                            placeholder="Pesquisar registro..."
+                                                            value={tableSearch}
+                                                            onChange={(e) => {
+                                                                setTableSearch(e.target.value);
+                                                                setTableLimit(50); // Reset limit on search
+                                                            }}
+                                                            className="w-full pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-purple/20 focus:border-brand-purple outline-none transition-all"
+                                                        />
+                                                    </div>
+                                                    <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-green-700 transition-shadow hover:shadow-lg">
+                                                        <Download size={16} /> Exportar Excel
                                                     </button>
                                                 </div>
                                             </div>
-                                            <table className="w-full text-left">
-                                                <thead className="bg-gray-50 text-gray-500 text-xs font-bold uppercase tracking-wider">
-                                                    <tr>
-                                                        <th className="px-4 py-4 whitespace-nowrap w-[120px]">Data</th>
-                                                        <th className="px-4 py-4 whitespace-nowrap min-w-[250px]">Colaborador</th>
-                                                        <th className="px-4 py-4 whitespace-nowrap min-w-[150px]">Rota</th>
-                                                        <th className="px-4 py-4 whitespace-nowrap min-w-[150px]">Regional</th>
-                                                        <th className="px-4 py-4 whitespace-nowrap w-[100px]">MRU</th>
-                                                        <th className="px-4 py-4 whitespace-nowrap w-[110px]">Hora Início</th>
-                                                        <th className="px-4 py-4 whitespace-nowrap w-[110px]">Hora Final</th>
-                                                        <th className="px-4 py-4 whitespace-nowrap w-[110px]">Total Bruto</th>
-                                                        <th className="px-4 py-4 whitespace-nowrap w-[110px]">
-                                                            <div className="flex flex-col">
-                                                                <span>Intervalo</span>
-                                                                <span className="text-[8px] text-brand-purple/70 lowercase font-normal leading-tight tracking-tighter">Soma 03 Maiores</span>
-                                                            </div>
-                                                        </th>
-                                                        <th className="px-4 py-4 whitespace-nowrap w-[140px]">Horas Líquidas</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-gray-100">
-                                                    {filteredData.slice(0, 50).map((row, idx) => (
-                                                        <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                                                            <td className="px-4 py-4 text-sm font-medium whitespace-nowrap">{row.data_formatada}</td>
-                                                            <td className="px-4 py-4 text-sm whitespace-nowrap">{row.colaborador}</td>
-                                                            <td className="px-4 py-4 text-sm font-bold text-gray-500 whitespace-nowrap">{row.rota}</td>
-                                                            <td className="px-4 py-4 text-sm text-gray-500 whitespace-nowrap">{row.regional}</td>
-                                                            <td className="px-4 py-4 text-sm font-mono whitespace-nowrap">{row.mru}</td>
-                                                            <td className="px-4 py-4 text-sm whitespace-nowrap">{row.hora_inicio}</td>
-                                                            <td className="px-4 py-4 text-sm whitespace-nowrap">{row.hora_final}</td>
-                                                            <td className="px-4 py-4 text-sm whitespace-nowrap">{row.total_bruto}</td>
-                                                            <td className="px-4 py-4 text-sm whitespace-nowrap">{row.intervalo}</td>
-                                                            <td className="px-4 py-4 text-sm whitespace-nowrap">
-                                                                <span className={cn(
-                                                                    "px-3 py-1 rounded-full font-bold text-xs",
-                                                                    row.horas_liquidas_dec >= 8 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                                                                )}>
-                                                                    {row.horas_liquidas}
-                                                                </span>
-                                                            </td>
+
+                                            <div className="overflow-x-auto rounded-2xl border border-gray-100 shadow-sm transition-all bg-white">
+                                                <table className="w-full text-left">
+                                                    <thead className="bg-gray-50 text-gray-500 text-[10px] font-bold uppercase tracking-wider">
+                                                        <tr>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[120px]">Data</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap min-w-[250px]">Colaborador</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap min-w-[150px]">Rota</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap min-w-[150px]">Regional</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[100px]">MRU</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[80px]">Reg.</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[110px]">Início (L)</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[110px]">Fim (L)</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[110px]">Bruto</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[110px]">Intervalo</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[140px]">Líquido</th>
                                                         </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                            {filteredData.length > 50 && (
-                                                <p className="mt-4 text-center text-gray-400 text-xs lowercase">Mostrando apenas os primeiros 50 registros. Use filtros para refinar.</p>
-                                            )}
+                                                    </thead>
+                                                    <tbody className="divide-y divide-gray-100">
+                                                        {tableDataFiltered.slice(0, tableLimit).map((row, idx) => (
+                                                            <tr key={idx} className="hover:bg-gray-50 transition-colors group">
+                                                                <td className="px-4 py-3 text-sm font-medium whitespace-nowrap text-gray-600">{row.data_formatada}</td>
+                                                                <td className="px-4 py-3 text-sm whitespace-nowrap font-semibold text-gray-700">{row.colaborador}</td>
+                                                                <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{row.rota}</td>
+                                                                <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{row.regional}</td>
+                                                                <td className="px-4 py-3 text-sm font-mono text-brand-purple whitespace-nowrap font-bold">{row.mru}</td>
+                                                                <td className="px-4 py-3 text-sm font-bold text-gray-700 whitespace-nowrap">
+                                                                    <span className="bg-gray-100 px-2 py-0.5 rounded text-[10px]">{row.registros}</span>
+                                                                </td>
+                                                                <td className="px-4 py-3 text-sm whitespace-nowrap text-gray-600">{row.hora_inicio}</td>
+                                                                <td className="px-4 py-3 text-sm whitespace-nowrap text-gray-600">{row.hora_final}</td>
+                                                                <td className="px-4 py-3 text-sm whitespace-nowrap font-mono text-gray-500">{row.total_bruto}</td>
+                                                                <td className="px-4 py-3 text-sm whitespace-nowrap font-mono text-gray-500">{row.intervalo}</td>
+                                                                <td className="px-4 py-3 text-sm whitespace-nowrap">
+                                                                    <span className={cn(
+                                                                        "px-3 py-1 rounded-full font-bold text-[10px] uppercase tracking-wider",
+                                                                        row.horas_liquidas_dec >= 8 ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                                                                    )}>
+                                                                        {row.horas_liquidas}
+                                                                    </span>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+
+                                                {tableDataFiltered.length === 0 && (
+                                                    <div className="py-20 text-center">
+                                                        <Search className="mx-auto text-gray-200 mb-4" size={48} />
+                                                        <p className="text-gray-400 font-medium">Nenhum registro encontrado.</p>
+                                                    </div>
+                                                )}
+
+                                                {tableDataFiltered.length > tableLimit && (
+                                                    <div className="p-6 bg-gray-50/50 border-t border-gray-100 flex justify-center">
+                                                        <button
+                                                            onClick={() => setTableLimit(prev => prev + 100)}
+                                                            className="px-8 py-3 bg-white text-brand-purple rounded-xl font-bold text-sm hover:bg-brand-purple hover:text-white transition-all border border-brand-purple/20 shadow-sm"
+                                                        >
+                                                            Carregar mais 100 registros (Total: {tableDataFiltered.length})
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </motion.div>
                                     )}
                                 </AnimatePresence>
@@ -1234,6 +1381,15 @@ export default function App() {
                     </div >
                 )
                 }
+
+                <AnimatePresence>
+                    {showSuccessModal && uploadStats && (
+                        <SuccessModal
+                            stats={uploadStats}
+                            onClose={() => setShowSuccessModal(false)}
+                        />
+                    )}
+                </AnimatePresence>
             </main >
         </div >
     );

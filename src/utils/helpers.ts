@@ -16,6 +16,7 @@ export interface ProcessedRow {
     hora_final: string;
     total_bruto: string;
     intervalo: string;
+    registros: number;
     horas_liquidas: string;
 }
 

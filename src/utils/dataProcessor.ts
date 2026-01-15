@@ -2,7 +2,7 @@ import { ProcessedRow } from './helpers';
 export { timeToDecimal, decimalToTime, cleanMRU } from './helpers';
 export type { ProcessedRow } from './helpers';
 
-export const processData = async (file: File): Promise<ProcessedRow[]> => {
+export const processData = async (file: File): Promise<{ data: ProcessedRow[], stats: any }> => {
     return new Promise((resolve, reject) => {
         const type = file.name.endsWith('.csv') ? 'csv' : 'xlsx';
 
@@ -14,14 +14,13 @@ export const processData = async (file: File): Promise<ProcessedRow[]> => {
         worker.postMessage({ file, type });
 
         worker.onmessage = (e) => {
-            const { success, data, error } = e.data;
+            const { success, data, stats, error } = e.data;
             if (success) {
-                // Converter strings de data de volta para objetos Date (Workers transferem como strings)
                 const restoredData = data.map((row: any) => ({
                     ...row,
                     data: new Date(row.data)
                 }));
-                resolve(restoredData);
+                resolve({ data: restoredData, stats });
             } else {
                 reject(new Error(error));
             }
