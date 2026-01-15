@@ -506,15 +506,15 @@ export default function App() {
             // MRU
             if (!selectedMRUs.includes('Todas') && !selectedMRUs.includes(row.mru)) return false;
 
-            // Perfil (Faixa de Horais)
-            const h = row.horas_liquidas_dec;
+            // Perfil (Faixa de Horais) - Usando Floor para tolerar excesso de minutos/segundos
+            const hFloor = Math.floor(row.horas_liquidas_dec);
             if (selectedPerfil !== 'Todos') {
-                if (selectedPerfil === 'Até 08:00:00' && h > 8) return false;
-                if (selectedPerfil === 'Até 09:00:00' && (h <= 8 || h > 9)) return false;
-                if (selectedPerfil === 'Até 10:00:00' && (h <= 9 || h > 10)) return false;
-                if (selectedPerfil === 'Até 11:00:00' && (h <= 10 || h > 11)) return false;
-                if (selectedPerfil === 'Até 12:00:00' && (h <= 11 || h > 12)) return false;
-                if (selectedPerfil === 'Acima de 12:00:00' && h <= 12) return false;
+                if (selectedPerfil === 'Até 08:00:00' && hFloor > 8) return false;
+                if (selectedPerfil === 'Até 09:00:00' && hFloor !== 9) return false;
+                if (selectedPerfil === 'Até 10:00:00' && hFloor !== 10) return false;
+                if (selectedPerfil === 'Até 11:00:00' && hFloor !== 11) return false;
+                if (selectedPerfil === 'Até 12:00:00' && hFloor !== 12) return false;
+                if (selectedPerfil === 'Acima de 12:00:00' && hFloor <= 12) return false;
             }
 
             return true;
@@ -540,28 +540,52 @@ export default function App() {
     const stats = useMemo(() => {
         if (filteredData.length === 0) return { colab: "00:00:00", rota: "00:00:00", reg: "00:00:00", mru: "00:00:00" };
 
-        const calculateGroupedAvg = (key: keyof ProcessedRow) => {
+        // 1. Média Colaborador (Continua individual)
+        const calculateColabAvg = () => {
             const grouped = new Map<string, number[]>();
             filteredData.forEach(d => {
-                const groupValue = String(d[key]);
+                const groupValue = d.colaborador;
                 if (!grouped.has(groupValue)) grouped.set(groupValue, []);
                 grouped.get(groupValue)!.push(d.horas_liquidas_dec);
             });
-
-            // Média de cada grupo
             const groupAverages = Array.from(grouped.values()).map(vals =>
                 vals.reduce((a, b) => a + b, 0) / vals.length
             );
-
-            // Média das médias
             return groupAverages.reduce((a, b) => a + b, 0) / groupAverages.length;
         };
 
+        // 2. Agrupamento Mestre por MRU + Data para as outras médias
+        const mruTotalsMap = new Map<string, { valor: number, rota: string, regional: string }>();
+        filteredData.forEach(d => {
+            const key = `${d.mru}-${d.data_formatada}`;
+            if (!mruTotalsMap.has(key)) {
+                mruTotalsMap.set(key, { valor: d.horas_liquidas_dec, rota: d.rota, regional: d.regional });
+            } else {
+                mruTotalsMap.get(key)!.valor += d.horas_liquidas_dec;
+            }
+        });
+        const mruData = Array.from(mruTotalsMap.values());
+
+        const calculateMruBasedAvg = (key: 'rota' | 'regional') => {
+            const grouped = new Map<string, number[]>();
+            mruData.forEach(d => {
+                const groupValue = d[key];
+                if (!grouped.has(groupValue)) grouped.set(groupValue, []);
+                grouped.get(groupValue)!.push(d.valor);
+            });
+            const groupAverages = Array.from(grouped.values()).map(vals =>
+                vals.reduce((a, b) => a + b, 0) / vals.length
+            );
+            return groupAverages.reduce((a, b) => a + b, 0) / groupAverages.length;
+        };
+
+        const topLevelMruAvg = mruData.reduce((a, b) => a + b.valor, 0) / mruData.length;
+
         return {
-            colab: decimalToTime(calculateGroupedAvg('colaborador')),
-            rota: decimalToTime(calculateGroupedAvg('rota')),
-            reg: decimalToTime(calculateGroupedAvg('regional')),
-            mru: decimalToTime(calculateGroupedAvg('mru'))
+            colab: decimalToTime(calculateColabAvg()),
+            rota: decimalToTime(calculateMruBasedAvg('rota')),
+            reg: decimalToTime(calculateMruBasedAvg('regional')),
+            mru: decimalToTime(topLevelMruAvg)
         };
     }, [filteredData]);
 
@@ -571,23 +595,40 @@ export default function App() {
             mrus: [], rotas: [], regionais: [], evolucao: [], frequencia: [], agreste: [], sertao: []
         };
 
-        const totalOverall = filteredData.length;
+        // Pre-agrupar por MRU + Data para quase tudo (Evita duplicidade de MRUs compartilhadas)
+        const mruGroupedMap = new Map<string, { valor: number, mru: string, rota: string, regional: string, data: Date }>();
+        filteredData.forEach(d => {
+            const key = `${d.mru}-${d.data_formatada}`;
+            if (!mruGroupedMap.has(key)) {
+                mruGroupedMap.set(key, {
+                    valor: d.horas_liquidas_dec,
+                    mru: d.mru,
+                    rota: d.rota,
+                    regional: d.regional,
+                    data: d.data
+                });
+            } else {
+                mruGroupedMap.get(key)!.valor += d.horas_liquidas_dec;
+            }
+        });
+        const groupedByMru = Array.from(mruGroupedMap.values());
+        const totalOverallMru = groupedByMru.length;
 
-        // 1. Faixas
+        // 1. Faixas (Usando dados agrupados por MRU)
         const faixasLabels = ['Até 08:00:00', 'Até 09:00:00', 'Até 10:00:00', 'Até 11:00:00', 'Até 12:00:00', 'Acima de 12:00:00'];
         const faixasColors = ['#667eea', '#764ba2', '#9f7aea', '#b794f4', '#d6bcfa', '#e9d8fd'];
 
         const faixasData = faixasLabels.map((f, i) => {
-            const count = filteredData.filter(d => {
-                const h = d.horas_liquidas_dec;
+            const count = groupedByMru.filter(d => {
+                const h = Math.floor(d.valor);
                 if (f === 'Até 08:00:00') return h <= 8;
-                if (f === 'Até 09:00:00') return h > 8 && h <= 9;
-                if (f === 'Até 10:00:00') return h > 9 && h <= 10;
-                if (f === 'Até 11:00:00') return h > 10 && h <= 11;
-                if (f === 'Até 12:00:00') return h > 11 && h <= 12;
+                if (f === 'Até 09:00:00') return h === 9;
+                if (f === 'Até 10:00:00') return h === 10;
+                if (f === 'Até 11:00:00') return h === 11;
+                if (f === 'Até 12:00:00') return h === 12;
                 return h > 12;
             }).length;
-            const percent = totalOverall > 0 ? ((count / totalOverall) * 100).toFixed(1) : 0;
+            const percent = totalOverallMru > 0 ? ((count / totalOverallMru) * 100).toFixed(1) : 0;
             return {
                 name: f,
                 total: count,
@@ -596,21 +637,21 @@ export default function App() {
             };
         });
 
-        // 2. Meta
-        const ok = filteredData.filter(d => d.horas_liquidas_dec >= 8).length;
-        const fail = filteredData.length - ok;
+        // 2. Meta (Usando dados agrupados por MRU)
+        const ok = groupedByMru.filter(d => d.valor >= 8).length;
+        const fail = groupedByMru.length - ok;
         const metaData = [
             { name: 'Dentro da Meta', value: ok, color: '#10b981' },
             { name: 'Abaixo da Meta', value: fail, color: '#ef4444' }
         ];
 
-        // 3. Colaboradores
-        const grouped = new Map<string, number[]>();
+        // 3. Colaboradores (Mantém individual)
+        const colabMap = new Map<string, number[]>();
         filteredData.forEach(d => {
-            if (!grouped.has(d.colaborador)) grouped.set(d.colaborador, []);
-            grouped.get(d.colaborador)!.push(d.horas_liquidas_dec);
+            if (!colabMap.has(d.colaborador)) colabMap.set(d.colaborador, []);
+            colabMap.get(d.colaborador)!.push(d.horas_liquidas_dec);
         });
-        const colaboradoresData = Array.from(grouped.entries()).map((entry) => {
+        const colaboradoresData = Array.from(colabMap.entries()).map((entry) => {
             const [name, vals] = entry;
             return {
                 name,
@@ -620,23 +661,23 @@ export default function App() {
         }).sort((a, b) => b.avg - a.avg);
 
         // 4. Top 10 MRU - High to Low
-        const topMRUs = filteredData
-            .filter(d => d.horas_liquidas_dec >= 8)
-            .sort((a, b) => b.horas_liquidas_dec - a.horas_liquidas_dec)
-            .slice(0, 10)
+        const topMRUs = groupedByMru
             .map(d => ({
                 name: d.mru,
-                valor: d.horas_liquidas_dec,
-                time: d.horas_liquidas
-            }));
+                valor: d.valor,
+                time: decimalToTime(d.valor)
+            }))
+            .filter(d => d.valor >= 8)
+            .sort((a, b) => b.valor - a.valor)
+            .slice(0, 10);
 
-        // 5. Por Rota e Regional
-        const groupStats = (key: keyof ProcessedRow, context: ProcessedRow[]) => {
+        // 5. Por Rota e Regional (Usando MRU Grouped)
+        const groupStatsByMru = (key: 'rota' | 'regional') => {
             const map = new Map<string, number[]>();
-            context.forEach(d => {
-                const val = String(d[key]);
+            groupedByMru.forEach(d => {
+                const val = d[key];
                 if (!map.has(val)) map.set(val, []);
-                map.get(val)!.push(d.horas_liquidas_dec);
+                map.get(val)!.push(d.valor);
             });
             return Array.from(map.entries()).map(([name, vals]) => {
                 const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
@@ -644,15 +685,15 @@ export default function App() {
             }).sort((a, b) => b.avg - a.avg);
         };
 
-        const rotasData = groupStats('rota', filteredData);
-        const regionaisData = groupStats('regional', filteredData);
+        const rotasData = groupStatsByMru('rota');
+        const regionaisData = groupStatsByMru('regional');
 
-        // 6. Evolução Diária
+        // 6. Evolução Diária (Usando MRU Grouped)
         const evolucaoMap = new Map<number, number[]>();
-        filteredData.forEach(d => {
+        groupedByMru.forEach(d => {
             const time = startOfDay(d.data).getTime();
             if (!evolucaoMap.has(time)) evolucaoMap.set(time, []);
-            evolucaoMap.get(time)!.push(d.horas_liquidas_dec);
+            evolucaoMap.get(time)!.push(d.valor);
         });
 
         const evolucaoData = Array.from(evolucaoMap.entries())
@@ -666,16 +707,15 @@ export default function App() {
                 };
             });
 
-        // 7. Frequência Semanal
-        const weekMap = new Map<number, number[]>(); // 0 (Sun) - 6 (Sat)
-        filteredData.forEach(d => {
+        // 7. Frequência Semanal (Usando MRU Grouped)
+        const weekMap = new Map<number, number[]>();
+        groupedByMru.forEach(d => {
             const day = d.data.getDay();
             if (!weekMap.has(day)) weekMap.set(day, []);
-            weekMap.get(day)!.push(d.horas_liquidas_dec);
+            weekMap.get(day)!.push(d.valor);
         });
 
         const days = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-        // Ordenar para começar na Segunda (1) e terminar no Domingo (0) -> 1,2,3,4,5,6,0
         const orderedDays = [1, 2, 3, 4, 5, 6, 0];
 
         const frequenciaData = orderedDays.map(dayIndex => {
@@ -688,15 +728,15 @@ export default function App() {
             };
         });
 
-        // 8. Regiões Específicas (Agreste e Sertão) - Devem respeitar os filtros
-        const getGroupedDataByRegions = (names: string[], groupBy: 'rota' | 'colaborador') => {
+        // 8. Regiões Específicas (Agreste e Sertão)
+        const getGroupedDataByRegionsMru = (regionNames: string[]) => {
             const map = new Map<string, number[]>();
-            filteredData.forEach(d => {
+            groupedByMru.forEach(d => {
                 const reg = String(d.regional).toUpperCase().trim();
-                const key = d[groupBy];
-                if (names.some(n => reg.includes(n))) {
+                const key = d.rota;
+                if (regionNames.some(n => reg.includes(n))) {
                     if (!map.has(key)) map.set(key, []);
-                    map.get(key)!.push(d.horas_liquidas_dec);
+                    map.get(key)!.push(d.valor);
                 }
             });
             return Array.from(map.entries()).map(([name, vals]) => {
@@ -705,8 +745,8 @@ export default function App() {
             }).sort((a, b) => b.avg - a.avg);
         };
 
-        const agresteData = getGroupedDataByRegions(['GARANHUNS', 'CARUARU'], 'rota');
-        const sertaoData = getGroupedDataByRegions(['SERRA TALHADA', 'PETROLINA', 'ARCOVERDE', 'SALGUEIRO'], 'rota');
+        const agresteData = getGroupedDataByRegionsMru(['GARANHUNS', 'CARUARU']);
+        const sertaoData = getGroupedDataByRegionsMru(['SERRA TALHADA', 'PETROLINA', 'ARCOVERDE', 'SALGUEIRO']);
 
         return {
             faixas: faixasData,
