@@ -17,7 +17,8 @@ import {
     Check,
     Database,
     FileText,
-    CheckCircle2
+    CheckCircle2,
+    AlertTriangle
 } from 'lucide-react';
 import {
     BarChart,
@@ -288,6 +289,52 @@ const SuccessModal = ({ stats, onClose }: { stats: any, onClose: () => void }) =
     </motion.div>
 );
 
+const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel }: { isOpen: boolean, title: string, message: string, onConfirm: () => void, onCancel: () => void }) => (
+    <AnimatePresence>
+        {isOpen && (
+            <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[120] flex items-center justify-center bg-brand-dark/90 backdrop-blur-lg p-4"
+            >
+                <motion.div
+                    initial={{ scale: 0.9, y: 20 }}
+                    animate={{ scale: 1, y: 0 }}
+                    exit={{ scale: 0.9, y: 20 }}
+                    className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full shadow-2xl relative overflow-hidden"
+                >
+                    <div className="absolute top-0 left-0 w-full h-2 bg-rose-500"></div>
+
+                    <div className="flex flex-col items-center text-center">
+                        <div className="w-20 h-20 bg-rose-100 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                            <AlertTriangle className="text-rose-500" size={40} />
+                        </div>
+
+                        <h2 className="text-3xl font-black text-brand-dark mb-2 font-outfit">{title}</h2>
+                        <p className="text-gray-500 mb-8 font-medium">{message}</p>
+
+                        <div className="flex flex-col gap-3 w-full">
+                            <button
+                                onClick={onConfirm}
+                                className="w-full py-4 bg-rose-500 text-white rounded-2xl font-black text-lg hover:bg-rose-600 transition-all shadow-xl shadow-rose-500/20 active:scale-95"
+                            >
+                                Sim, apagar tudo
+                            </button>
+                            <button
+                                onClick={onCancel}
+                                className="w-full py-4 bg-gray-100 text-gray-500 rounded-2xl font-bold text-lg hover:bg-gray-200 transition-all active:scale-95"
+                            >
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </motion.div>
+            </motion.div>
+        )}
+    </AnimatePresence>
+);
+
 const TabButton = ({ active, onClick, children, icon: Icon }: any) => (
     <button
         onClick={onClick}
@@ -321,6 +368,7 @@ export default function App() {
     const [tableSearch, setTableSearch] = useState('');
     const [tableLimit, setTableLimit] = useState(50);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [uploadStats, setUploadStats] = useState<any>(null);
 
     // Carregar dados persistidos ao iniciar
@@ -871,12 +919,7 @@ export default function App() {
                     </button>
 
                     <button
-                        onClick={async () => {
-                            if (confirm("Deseja realmente apagar os dados carregados?")) {
-                                await del('dashboard_data');
-                                window.location.reload();
-                            }
-                        }}
+                        onClick={() => setShowDeleteModal(true)}
                         className="w-full py-3 mt-3 text-[10px] font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 transition-all rounded-xl border border-red-500/20 flex items-center justify-center gap-2"
                     >
                         <X size={12} /> Apagar Todos os Dados
@@ -1377,10 +1420,9 @@ export default function App() {
                                     )}
                                 </AnimatePresence>
                             </div>
-                        </div >
-                    </div >
-                )
-                }
+                        </div>
+                    </div>
+                )}
 
                 <AnimatePresence>
                     {showSuccessModal && uploadStats && (
@@ -1390,7 +1432,18 @@ export default function App() {
                         />
                     )}
                 </AnimatePresence>
-            </main >
-        </div >
+
+                <ConfirmModal
+                    isOpen={showDeleteModal}
+                    title="Apagar Dados?"
+                    message="Isso removerá todos os registros importados permanentemente. Esta ação não pode ser desfeita."
+                    onConfirm={async () => {
+                        await del('dashboard_data');
+                        window.location.reload();
+                    }}
+                    onCancel={() => setShowDeleteModal(false)}
+                />
+            </main>
+        </div>
     );
 }
