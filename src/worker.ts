@@ -83,7 +83,8 @@ self.onmessage = async (e: MessageEvent) => {
                 hora_final: decimalToTime(endDec),
                 total_bruto: decimalToTime(bruteHoursDec),
                 intervalo: decimalToTime(top3IntervalsSum),
-                horas_liquidas: decimalToTime(netHoursDec)
+                horas_liquidas: decimalToTime(netHoursDec),
+                registros: records.length
             });
         });
 
