@@ -153,64 +153,17 @@ self.onmessage = async (e: MessageEvent) => {
             return isValid(dt) ? startOfDay(dt) : null;
         };
 
-        // --- MAPEAR COLUNAS DINAMICAMENTE (COM FALLBACKS SINC) ---
-        let idxDate = 0;
-        let idxColab = 41; // Coluna AP
-        let idxRota = 3;   // Coluna D
-        let idxReg = 4;    // Coluna E
-        let idxMru = 12;   // Coluna M
-        let idxHora = 36;  // Coluna AK (Hora Leitura)
-        let idxInterval = 46; // Coluna AU
+        // Mapeamento de Colunas (ESTRITO conforme solicitado por posição)
+        const idxDate = 0;     // Coluna A
+        const idxRota = 3;     // Coluna D
+        const idxReg = 4;      // Coluna E
+        const idxRegField = 9; // Coluna J (Registros)
+        const idxMru = 12;     // Coluna M
+        const idxHora = 36;    // Coluna AK (Hora Leitura)
+        const idxColab = 41;   // Coluna AP
+        const idxInterval = 46; // Coluna AU
 
-        let headerRowIdx = -1;
-        for (let i = 0; i < Math.min(rows.length, 500); i++) {
-            const row = rows[i];
-            if (!row || row.length < 10) continue;
-
-            const rStr = row.map(c => String(c || "").toLowerCase());
-
-            // Critério de identificação de cabeçalho: se tiver 'data' e algo que lembre 'colaborador' ou 'leitura'
-            if (rStr.includes('data') && (rStr.some(s => s.includes('colab')) || rStr.some(s => s.includes('leitura')))) {
-                headerRowIdx = i;
-
-                // Priorizar nomes específicos para evitar confusão entre 'Hora' e 'Hora Leitura'
-                const findIdx = (terms: string[]) => rStr.findIndex(s => terms.some(t => s.includes(t)));
-
-                const dIdx = rStr.indexOf('data');
-                if (dIdx !== -1) idxDate = dIdx;
-
-                const cIdx = findIdx(['colaborador']);
-                if (cIdx !== -1) idxColab = cIdx;
-                else {
-                    const nIdx = rStr.indexOf('nome');
-                    if (nIdx !== -1) idxColab = nIdx;
-                }
-
-                const mIdx = rStr.indexOf('mru');
-                if (mIdx !== -1) idxMru = mIdx;
-
-                const rIdx = rStr.indexOf('rota');
-                if (rIdx !== -1) idxRota = rIdx;
-
-                const regIdx = rStr.indexOf('regional');
-                if (regIdx !== -1) idxReg = regIdx;
-
-                // Priorizar 'Hora Leitura' ou 'Leitura' sobre apenas 'Hora'
-                const hlIdx = findIdx(['leitura']);
-                if (hlIdx !== -1) idxHora = hlIdx;
-                else {
-                    const hIdx = rStr.indexOf('hora');
-                    if (hIdx !== -1) idxHora = hIdx;
-                }
-
-                const iIdx = rStr.indexOf('intervalo');
-                if (iIdx !== -1) idxInterval = iIdx;
-
-                break;
-            }
-        }
-
-        const startIdx = headerRowIdx === -1 ? 0 : headerRowIdx + 1;
+        const startIdx = 1; // Sempre começa na linha 2 (índice 1)
         const result: any[] = [];
         const groupedMap = new Map<string, any[]>();
 
@@ -218,7 +171,8 @@ self.onmessage = async (e: MessageEvent) => {
         let columnErrorRows = 0;
         let dateErrorRows = 0;
 
-        const minCols = Math.max(idxDate, idxColab, idxHora, idxMru) + 1;
+        // Calcular minCols essencial (Apenas Data e MRU)
+        const minCols = Math.max(idxDate, idxMru) + 1;
 
         for (let i = startIdx; i < rows.length; i++) {
             const row = rows[i];
@@ -230,9 +184,7 @@ self.onmessage = async (e: MessageEvent) => {
             }
 
             const rawDate = row[idxDate];
-            const rawColab = row[idxColab];
-
-            if (!rawDate || !rawColab || String(rawColab).trim() === "" || String(rawColab).toLowerCase().includes('colaborador')) {
+            if (!rawDate || String(rawDate).trim() === "") {
                 skippedRows++;
                 continue;
             }
@@ -245,31 +197,42 @@ self.onmessage = async (e: MessageEvent) => {
             }
 
             const dateKey = format(dateObj, 'yyyy-MM-dd');
-            // Limpeza de MRU para evitar problemas com .0 ou espaços
-            const mruStr = String(row[idxMru] || "").split('.')[0].trim().padStart(8, '0');
+
+            // Campos com consulta segura por índice
+            const rawColab = row.length > idxColab ? row[idxColab] : "";
+            const rawMru = row.length > idxMru ? row[idxMru] : "";
+            const rawRota = row.length > idxRota ? row[idxRota] : "";
+            const rawReg = row.length > idxReg ? row[idxReg] : "";
+            const rawRegField = row.length > idxRegField ? row[idxRegField] : "";
+            const rawHora = row.length > idxHora ? row[idxHora] : "";
+            const rawInterval = row.length > idxInterval ? row[idxInterval] : "";
+
+            // Se não tiver colaborador, não descartar a linha
+            const colabStr = (rawColab && String(rawColab).trim() !== "") ? String(rawColab) : "Sem Colaborador";
+            const mruStr = String(rawMru || "").split('.')[0].trim().padStart(8, '0');
 
             // Suporte a múltiplos nomes na mesma célula
-            const colabNames = String(rawColab).split(/[;/]/).map(n => n.trim()).filter(n => n.length > 3);
+            const colabNames = colabStr.split(/[;/]/).map(n => n.trim()).filter(n => n.length > 1);
+            if (colabNames.length === 0) colabNames.push("Sem Colaborador");
 
             for (const name of colabNames) {
                 const groupKey = `${name}|${dateKey}|${mruStr}`;
 
                 if (!groupedMap.has(groupKey)) groupedMap.set(groupKey, []);
 
-                const hVal = row[idxHora];
-                const hDec = timeToDecimalWorker(hVal);
+                const hDec = timeToDecimalWorker(rawHora);
 
-                if (hDec > 0) {
-                    groupedMap.get(groupKey)!.push({
-                        row,
-                        dateObj,
-                        horaDec: hDec,
-                        intervalDec: row.length > idxInterval ? timeToDecimalWorker(row[idxInterval]) : 0
-                    });
-                    validLineCount++;
-                } else {
-                    skippedRows++;
-                }
+                groupedMap.get(groupKey)!.push({
+                    row,
+                    dateObj,
+                    horaDec: hDec,
+                    hasTime: (rawHora !== undefined && rawHora !== null && String(rawHora).trim() !== "" && String(rawHora).trim() !== "0"),
+                    regValue: String(rawRegField || "").trim(),
+                    intervalDec: timeToDecimalWorker(rawInterval),
+                    customRota: String(rawRota || "Sem Rota").trim(),
+                    customReg: String(rawReg || "Sem Regional").trim()
+                });
+                validLineCount++;
             }
         }
 
@@ -278,26 +241,39 @@ self.onmessage = async (e: MessageEvent) => {
         groupedMap.forEach((records, key) => {
             const [name, dateStr, mru] = key.split('|');
             const first = records[0];
-            const hours = records.map(r => r.horaDec).filter(h => h > 0);
+
+            // Focar apenas em registros que tenham hora preenchida para cálculos de tempo
+            const validTimeRecords = records.filter(r => r.hasTime);
+            const hours = validTimeRecords.map(r => r.horaDec);
             const intervals = records.map(r => r.intervalDec).filter(h => h > 0);
 
-            if (hours.length === 0) return;
+            // Contagem de valores únicos da Coluna J (regValue)
+            const uniqueRegValues = new Set(records.map(r => r.regValue).filter(v => v !== "")).size;
+            const finalRegistros = uniqueRegValues > 0 ? uniqueRegValues : records.length;
 
-            const startDec = Math.min(...hours);
-            const endDec = Math.max(...hours);
-            const sortedIntervals = intervals.sort((a, b) => b - a);
-            const top3Sum = sortedIntervals.slice(0, 3).reduce((acc, val) => acc + val, 0);
-            const bruteDec = endDec - startDec;
-            const netDec = Math.max(0, bruteDec - top3Sum);
+            let startDec = 0;
+            let endDec = 0;
+            let top3Sum = 0;
+            let bruteDec = 0;
+            let netDec = 0;
+
+            if (hours.length > 0) {
+                startDec = Math.min(...hours);
+                endDec = Math.max(...hours);
+                const sortedIntervals = intervals.sort((a, b) => b - a);
+                top3Sum = sortedIntervals.slice(0, 3).reduce((acc, val) => acc + val, 0);
+                bruteDec = endDec - startDec;
+                netDec = Math.max(0, bruteDec - top3Sum);
+            }
 
             result.push({
                 data: first.dateObj,
                 data_formatada: format(first.dateObj, 'dd/MM/yyyy'),
                 colaborador: name,
-                rota: String(first.row[idxRota] || "Sem Rota").trim(),
-                regional: String(first.row[idxReg] || "Sem Regional").trim(),
+                rota: records.find(r => r.customRota !== "Sem Rota")?.customRota || "Sem Rota",
+                regional: records.find(r => r.customReg !== "Sem Regional")?.customReg || "Sem Regional",
                 mru: mru,
-                registros: records.length,
+                registros: finalRegistros,
                 hora_inicio_dec: startDec,
                 hora_final_dec: endDec,
                 soma_intervalos_dec: top3Sum,

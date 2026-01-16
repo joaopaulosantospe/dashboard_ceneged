@@ -762,6 +762,7 @@ export default function App() {
         };
     }, [filteredData]);
 
+
     // Exportar para Excel em Segundo Plano (Background Worker)
     const exportToExcel = async () => {
         if (filteredData.length === 0) {
@@ -822,6 +823,92 @@ export default function App() {
 
         } catch (error) {
             console.error("Erro na exportação:", error);
+            alert("Ocorreu um erro ao preparar a exportação.");
+            setLoading(false);
+        }
+    };
+
+    // Exportar Relatório de MRU Agrupado
+    const exportMruRelatorio = async () => {
+        if (filteredData.length === 0) {
+            alert("Não há dados para exportar com os filtros atuais.");
+            return;
+        }
+
+        setLoading(true);
+
+        try {
+            // Agrupar por MRU (Consolidar todos os registros da mesma MRU, independente de data ou colaborador)
+            const mruMap = new Map<string, {
+                rota: string,
+                regional: string,
+                mru: string,
+                registros: number,
+                horas_liquidas_dec: number
+            }>();
+
+            filteredData.forEach(d => {
+                const key = d.mru;
+                if (!mruMap.has(key)) {
+                    mruMap.set(key, {
+                        rota: d.rota,
+                        regional: d.regional,
+                        mru: d.mru,
+                        registros: d.registros,
+                        horas_liquidas_dec: d.horas_liquidas_dec
+                    });
+                } else {
+                    const existing = mruMap.get(key)!;
+                    existing.registros += d.registros;
+                    existing.horas_liquidas_dec += d.horas_liquidas_dec;
+                }
+            });
+
+            // Ordenar por MRU
+            const sortedData = Array.from(mruMap.values()).sort((a, b) => a.mru.localeCompare(b.mru));
+
+            const dataToExport = sortedData.map(row => ({
+                'ROTA': row.rota,
+                'REGIONAL': row.regional,
+                'MRU': row.mru,
+                'REG.': row.registros,
+                'HORA TRAB.': decimalToTime(row.horas_liquidas_dec)
+            }));
+
+            const fileName = `relatorio_mru_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`;
+
+            const worker = new Worker(new URL('./utils/exportWorker.ts', import.meta.url), {
+                type: 'module'
+            });
+
+            worker.postMessage({ data: dataToExport, fileName });
+
+            worker.onmessage = (e) => {
+                const { success, blob, error } = e.data;
+                if (success) {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                } else {
+                    alert("Erro ao exportar: " + error);
+                }
+                setLoading(false);
+                worker.terminate();
+            };
+
+            worker.onerror = () => {
+                alert("Erro ao processar exportação em segundo plano.");
+                setLoading(false);
+                worker.terminate();
+            };
+
+        } catch (error) {
+            console.error("Erro na exportação MRU:", error);
             alert("Ocorreu um erro ao preparar a exportação.");
             setLoading(false);
         }
@@ -1389,6 +1476,9 @@ export default function App() {
                                                     </div>
                                                     <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-green-700 transition-shadow hover:shadow-lg">
                                                         <Download size={16} /> Exportar Excel
+                                                    </button>
+                                                    <button onClick={exportMruRelatorio} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-shadow hover:shadow-lg">
+                                                        <FileText size={16} /> Relatório MRU
                                                     </button>
                                                 </div>
                                             </div>
