@@ -18,6 +18,7 @@ export interface ProcessedRow {
     intervalo: string;
     registros: number;
     horas_liquidas: string;
+    lote: string;
 }
 
 /**

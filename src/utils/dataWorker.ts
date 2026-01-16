@@ -155,6 +155,7 @@ self.onmessage = async (e: MessageEvent) => {
 
         // Mapeamento de Colunas (ESTRITO conforme solicitado por posição)
         const idxDate = 0;     // Coluna A
+        const idxLote = 1;     // Coluna B
         const idxRota = 3;     // Coluna D
         const idxReg = 4;      // Coluna E
         const idxRegField = 9; // Coluna J (Registros)
@@ -200,6 +201,7 @@ self.onmessage = async (e: MessageEvent) => {
 
             // Campos com consulta segura por índice
             const rawColab = row.length > idxColab ? row[idxColab] : "";
+            const rawLote = row.length > idxLote ? row[idxLote] : "";
             const rawMru = row.length > idxMru ? row[idxMru] : "";
             const rawRota = row.length > idxRota ? row[idxRota] : "";
             const rawReg = row.length > idxReg ? row[idxReg] : "";
@@ -209,6 +211,7 @@ self.onmessage = async (e: MessageEvent) => {
 
             // Se não tiver colaborador, não descartar a linha
             const colabStr = (rawColab && String(rawColab).trim() !== "") ? String(rawColab) : "Sem Colaborador";
+            const loteStr = String(rawLote || "").trim().padStart(2, '0');
             const mruStr = String(rawMru || "").split('.')[0].trim().padStart(8, '0');
 
             // Suporte a múltiplos nomes na mesma célula
@@ -230,7 +233,8 @@ self.onmessage = async (e: MessageEvent) => {
                     regValue: String(rawRegField || "").trim(),
                     intervalDec: timeToDecimalWorker(rawInterval),
                     customRota: String(rawRota || "Sem Rota").trim(),
-                    customReg: String(rawReg || "Sem Regional").trim()
+                    customReg: String(rawReg || "Sem Regional").trim(),
+                    customLote: loteStr
                 });
                 validLineCount++;
             }
@@ -283,7 +287,8 @@ self.onmessage = async (e: MessageEvent) => {
                 hora_final: decimalToTimeWorker(endDec),
                 total_bruto: decimalToTimeWorker(bruteDec),
                 intervalo: decimalToTimeWorker(top3Sum),
-                horas_liquidas: decimalToTimeWorker(netDec)
+                horas_liquidas: decimalToTimeWorker(netDec),
+                lote: records.find(r => r.customLote !== "00")?.customLote || first.customLote || "00"
             });
         });
 

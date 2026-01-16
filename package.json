@@ -13,9 +13,12 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "framer-motion": "^11.5.4",
+    "html2canvas": "^1.4.1",
     "idb-keyval": "^6.2.2",
+    "jspdf": "^4.0.0",
     "lucide-react": "^0.439.0",
     "papaparse": "^5.5.3",
+    "pptxgenjs": "^4.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.12.7",
@@ -23,6 +26,8 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/html2canvas": "^1.0.0",
+    "@types/jspdf": "^2.0.0",
     "@types/node": "^22.5.4",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^18.3.5",

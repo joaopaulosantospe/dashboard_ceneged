@@ -1,4 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
+import pptxgen from "pptxgenjs";
 import {
     BarChart3,
     Users,
@@ -59,8 +62,8 @@ const ComboBox = ({ label, options, selected, onChange, multi = false, icon: Ico
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState("");
 
-    const filteredOptions = options.filter((opt: string) =>
-        opt.toLowerCase().includes(search.toLowerCase())
+    const filteredOptions = (options || []).filter((opt: any) =>
+        opt && String(opt).toLowerCase().includes(search.toLowerCase())
     );
 
     const handleSelect = (option: string) => {
@@ -339,7 +342,7 @@ const TabButton = ({ active, onClick, children, icon: Icon }: any) => (
     <button
         onClick={onClick}
         className={cn(
-            "flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all duration-300 whitespace-nowrap",
+            "flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium transition-all duration-300 whitespace-nowrap text-sm",
             active
                 ? "bg-brand-purple text-white shadow-md shadow-brand-purple/30"
                 : "bg-white text-gray-500 hover:bg-gray-100 hover:text-brand-purple"
@@ -364,6 +367,7 @@ export default function App() {
     const [selectedRegionais, setSelectedRegionais] = useState<string[]>(['Todas']);
     const [selectedColaborador, setSelectedColaborador] = useState('Todos');
     const [selectedMRUs, setSelectedMRUs] = useState<string[]>(['Todas']);
+    const [selectedLotes, setSelectedLotes] = useState<string[]>(['Todas']);
     const [selectedPerfil, setSelectedPerfil] = useState('Todos');
     const [tableSearch, setTableSearch] = useState('');
     const [tableLimit, setTableLimit] = useState(50);
@@ -477,10 +481,17 @@ export default function App() {
             contextForOthers = contextForRotas.filter(d => selectedRotas.includes(d.rota));
         }
 
-        const colaboradores = [...new Set(contextForOthers.map(d => d.colaborador))].sort();
-        const mrus = [...new Set(contextForOthers.map(d => d.mru))].sort();
+        const colaboradores = [...new Set(contextForOthers.map(d => d.colaborador))].filter(Boolean).sort();
+        const mrus = [...new Set(contextForOthers.map(d => d.mru))].filter(Boolean).sort();
+        const lotes = [...new Set(contextForOthers.map(d => d.lote))].filter(Boolean).sort();
 
-        return { rotas, regionais, colaboradores, mrus };
+        return {
+            rotas: rotas.filter(Boolean),
+            regionais: regionais.filter(Boolean),
+            colaboradores,
+            mrus,
+            lotes
+        };
     }, [data, selectedRotas, selectedRegionais]);
 
     // Aplicação dos Filtros
@@ -505,6 +516,9 @@ export default function App() {
 
             // MRU
             if (!selectedMRUs.includes('Todas') && !selectedMRUs.includes(row.mru)) return false;
+
+            // Lote
+            if (!selectedLotes.includes('Todas') && !selectedLotes.includes(row.lote)) return false;
 
             // Perfil (Faixa de Horais) - Usando Floor para tolerar excesso de minutos/segundos
             const hFloor = Math.floor(row.horas_liquidas_dec);
@@ -592,11 +606,12 @@ export default function App() {
     const chartsData = useMemo(() => {
         if (filteredData.length === 0) return {
             faixas: [], meta: [], colaboradores: [],
-            mrus: [], rotas: [], regionais: [], evolucao: [], frequencia: [], agreste: [], sertao: []
+            mrus: [], rotas: [], regionais: [], evolucao: [], frequencia: [], agreste: [], sertao: [],
+            lotes: { totais: [], media: [] }
         };
 
         // Pre-agrupar por MRU + Data para quase tudo (Evita duplicidade de MRUs compartilhadas)
-        const mruGroupedMap = new Map<string, { valor: number, mru: string, rota: string, regional: string, data: Date }>();
+        const mruGroupedMap = new Map<string, { valor: number, mru: string, rota: string, regional: string, data: Date, lote: string }>();
         filteredData.forEach(d => {
             const key = `${d.mru}-${d.data_formatada}`;
             if (!mruGroupedMap.has(key)) {
@@ -605,7 +620,8 @@ export default function App() {
                     mru: d.mru,
                     rota: d.rota,
                     regional: d.regional,
-                    data: d.data
+                    data: d.data,
+                    lote: d.lote
                 });
             } else {
                 mruGroupedMap.get(key)!.valor += d.horas_liquidas_dec;
@@ -758,7 +774,66 @@ export default function App() {
             evolucao: evolucaoData,
             frequencia: frequenciaData,
             agreste: agresteData,
-            sertao: sertaoData
+            sertao: sertaoData,
+            lotes: (() => {
+                const loteTotalMap = new Map<string, number>();
+                const loteUnder7Map = new Map<string, number>();
+
+                // Inicializar com 01-18
+                for (let i = 1; i <= 18; i++) {
+                    const lKey = String(i).padStart(2, '0');
+                    loteTotalMap.set(lKey, 0);
+                    loteUnder7Map.set(lKey, 0);
+                }
+
+                // 1. Total de Horas por Lote
+                groupedByMru.forEach(d => {
+                    const l = String(d.lote || "").trim();
+                    if (loteTotalMap.has(l)) {
+                        loteTotalMap.set(l, loteTotalMap.get(l)! + d.valor);
+                    }
+                });
+
+                // 2. Colaboradores com média < 07:00:00 por Lote
+                // Primeiro agrupamos por Lote -> Colaborador -> Média
+                const loteColabMap = new Map<string, Map<string, number[]>>();
+                filteredData.forEach(d => {
+                    const l = String(d.lote || "").trim();
+                    if (!loteColabMap.has(l)) loteColabMap.set(l, new Map());
+                    const colabs = loteColabMap.get(l)!;
+                    if (!colabs.has(d.colaborador)) colabs.set(d.colaborador, []);
+                    colabs.get(d.colaborador)!.push(d.horas_liquidas_dec);
+                });
+
+                const loteAvgMap = new Map<string, { sum: number, count: number }>();
+                for (let i = 1; i <= 18; i++) {
+                    loteAvgMap.set(String(i).padStart(2, '0'), { sum: 0, count: 0 });
+                }
+
+                groupedByMru.forEach(d => {
+                    const l = String(d.lote || "").trim();
+                    if (loteAvgMap.has(l)) {
+                        const current = loteAvgMap.get(l)!;
+                        loteAvgMap.set(l, { sum: current.sum + d.valor, count: current.count + 1 });
+                    }
+                });
+
+                return {
+                    totais: Array.from(loteTotalMap.entries()).map(([name, total]) => ({
+                        name: `Lote ${name}`,
+                        total: total,
+                        time: decimalToTime(total)
+                    })),
+                    media: Array.from(loteAvgMap.entries()).map(([name, data]) => {
+                        const avg = data.count > 0 ? data.sum / data.count : 0;
+                        return {
+                            name: `Lote ${name}`,
+                            avg: avg,
+                            time: decimalToTime(avg)
+                        };
+                    })
+                };
+            })()
         };
     }, [filteredData]);
 
@@ -914,6 +989,132 @@ export default function App() {
         }
     };
 
+    const generateReport = async (type: 'pdf' | 'pptx') => {
+        setLoading(true);
+        try {
+            // IDs dos gráficos na área de captura oculta
+            const chartIds = [
+                { id: 'capture-faixas', title: 'Distribuição de Horas por Faixa' },
+                { id: 'capture-meta', title: 'Eficiência de Meta (8hs+)' },
+                { id: 'capture-topmru', title: 'Top 10 MRUs Acima da Meta' },
+                { id: 'capture-lote-total', title: 'Total de Horas Líquidas por Lote' },
+                { id: 'capture-lote-media', title: 'Média de Horas por Lote' },
+                { id: 'capture-rotas-agreste', title: 'Média de Horas por Rota (Agreste)' },
+                { id: 'capture-rotas-sertao', title: 'Média de Horas por Rota (Sertão)' },
+                { id: 'capture-regionais', title: 'Média de Horas por Regional' },
+                { id: 'capture-colaboradores', title: 'Média por Colaborador' },
+                { id: 'capture-evolucao', title: 'Evolução da Média de Horas' },
+                { id: 'capture-frequencia', title: 'Frequência de Trabalho (Dia/Semana)' }
+            ];
+
+            const capturedImages = [];
+
+            // AVISO: Só captura o que estiver Visível no DOM (aba ativa)
+            for (const chart of chartIds) {
+                const element = document.getElementById(chart.id);
+                if (element) {
+                    const canvas = await html2canvas(element, {
+                        scale: 2,
+                        backgroundColor: '#ffffff',
+                        logging: false,
+                        useCORS: true
+                    });
+                    capturedImages.push({
+                        img: canvas.toDataURL('image/png'),
+                        title: chart.title
+                    });
+                }
+            }
+
+            if (capturedImages.length === 0) {
+                alert('Nenhum gráfico visível encontrado para exportar. Por favor, navegue pelas abas (Visão Geral e Análise por Lote) para que os gráficos fiquem visíveis ao sistema de captura.');
+                setLoading(false);
+                return;
+            }
+
+            if (type === 'pdf') {
+                const pdf = new jsPDF('l', 'mm', 'a4');
+                const pageWidth = pdf.internal.pageSize.getWidth();
+                const pageHeight = pdf.internal.pageSize.getHeight();
+
+                capturedImages.forEach((item, index) => {
+                    if (index > 0) pdf.addPage('a4', 'l');
+
+                    // Cabeçalho Profissional
+                    pdf.setFillColor(102, 126, 234); // Brand Purple
+                    pdf.rect(0, 0, pageWidth, 25, 'F');
+                    pdf.setTextColor(255, 255, 255);
+                    pdf.setFontSize(16);
+                    pdf.text(`RELATÓRIO DE PERFORMANCE - CENEGED`, 15, 12);
+                    pdf.setFontSize(12);
+                    pdf.text(item.title, 15, 19);
+
+                    pdf.setTextColor(255, 255, 255);
+                    pdf.setFontSize(9);
+                    pdf.text(`Data: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, pageWidth - 50, 15);
+
+                    // Imagem do Gráfico
+                    // Ajustar proporcionalmente para ocupar melhor a página A4 Paisagem
+                    pdf.addImage(item.img, 'PNG', 10, 30, pageWidth - 20, pageHeight - 50);
+
+                    // Rodapé removido conforme solicitação
+                    pdf.setTextColor(150, 150, 150);
+                    pdf.setFontSize(8);
+                    pdf.text(`Página ${index + 1} de ${capturedImages.length}`, pageWidth - 20, pageHeight - 10, { align: 'right' });
+                });
+
+                pdf.save(`Relatorio_Performance_CENEGED_${format(new Date(), 'ddMMyyyy_HHmm')}.pdf`);
+            } else {
+                const pptx = new pptxgen();
+
+                // Slide de Título
+                const titleSlide = pptx.addSlide();
+                titleSlide.background = { color: 'FFFFFF' };
+
+                // Banner lateral ou superior para PPTX
+                titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 1.5, fill: { color: '667EEA' } });
+
+                titleSlide.addText("RELATÓRIO ANALÍTICO DE PERFORMANCE", {
+                    x: 0, y: 0.5, w: '100%', align: 'center', fontSize: 24, fontFace: 'Arial', bold: true, color: 'FFFFFF'
+                });
+
+                titleSlide.addText("CENEGED - BI DASHBOARD", {
+                    x: 0.5, y: 3.5, w: '90%', align: 'center', fontSize: 32, fontFace: 'Arial', bold: true, color: '363636'
+                });
+
+                titleSlide.addText(`Gerado em: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, {
+                    x: 0, y: 4.5, w: '100%', align: 'center', fontSize: 14, color: '666666'
+                });
+
+                capturedImages.forEach(item => {
+                    const slide = pptx.addSlide();
+
+                    // Título do Slide
+                    slide.addText(item.title, {
+                        x: 0.5, y: 0.3, w: '90%', fontSize: 20, color: '667EEA', bold: true
+                    });
+
+                    // Linha decorativa
+                    slide.addShape(pptx.ShapeType.line, { x: 0.5, y: 0.7, w: 9.0, h: 0, line: { color: 'E2E8F0', width: 1 } });
+
+                    // Imagem do Gráfico Centralizada e Ampliada
+                    slide.addImage({
+                        data: item.img, x: 0.2, y: 0.8, w: 9.6, h: 4.5
+                    });
+
+                    // Rodapé removido conforme solicitação
+                });
+
+                pptx.writeFile({ fileName: `Apresentacao_CENEGED_${format(new Date(), 'ddMMyyyy')}.pptx` });
+            }
+        } catch (error) {
+            console.error('Erro ao gerar relatório:', error);
+            alert('Houve um problema ao gerar o relatório. Tente novamente.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="flex min-h-screen bg-[#f8f9fc]">
             {/* Loading Overlay */}
@@ -1026,6 +1227,15 @@ export default function App() {
                             />
 
                             <ComboBox
+                                label="Lote"
+                                icon={Database}
+                                options={filterOptions.lotes}
+                                selected={selectedLotes}
+                                onChange={setSelectedLotes}
+                                multi={true}
+                            />
+
+                            <ComboBox
                                 label="Perfil de Produtividade"
                                 icon={TrendingUp}
                                 options={['Até 08:00:00', 'Até 09:00:00', 'Até 10:00:00', 'Até 11:00:00', 'Até 12:00:00', 'Acima de 12:00:00']}
@@ -1037,7 +1247,27 @@ export default function App() {
                     </div>
                 </div>
 
-                <div className="p-6 mt-auto border-t border-white/5">
+                <div className="p-6 mt-auto border-t border-white/5 space-y-3">
+                    <h2 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2 px-1 mb-1">
+                        <Download size={12} /> Relatórios
+                    </h2>
+
+                    <button
+                        onClick={() => generateReport('pdf')}
+                        className="w-full py-3 text-xs font-bold text-white bg-white/5 hover:bg-white/10 transition-all rounded-xl border border-white/10 flex items-center justify-center gap-2 group"
+                    >
+                        <FileText size={14} className="text-blue-400" /> Exportar PDF
+                    </button>
+
+                    <button
+                        onClick={() => generateReport('pptx')}
+                        className="w-full py-3 text-xs font-bold text-white bg-white/5 hover:bg-white/10 transition-all rounded-xl border border-white/10 flex items-center justify-center gap-2 group"
+                    >
+                        <div className="w-4 h-4 bg-orange-500 rounded-sm flex items-center justify-center text-[10px] font-black text-white">P</div>
+                        Exportar PowerPoint
+                    </button>
+
+                    <div className="pt-2"></div>
                     <button
                         onClick={() => window.location.reload()}
                         className="w-full py-4 text-xs font-bold text-white bg-white/5 hover:bg-brand-purple hover:shadow-lg hover:shadow-brand-purple/20 transition-all rounded-xl flex items-center justify-center gap-2 group"
@@ -1103,6 +1333,7 @@ export default function App() {
                             </motion.h1>
                         </div>
 
+
                         <motion.div
                             initial={{ width: 0 }}
                             animate={{ width: "60px" }}
@@ -1145,8 +1376,9 @@ export default function App() {
 
                         {/* Tabs */}
                         <div className="space-y-6">
-                            <div className="flex border-b border-gray-200 overflow-x-auto pb-4 gap-4 no-scrollbar">
+                            <div className="flex border-b border-gray-200 overflow-x-auto pb-4 gap-2 no-scrollbar">
                                 <TabButton active={activeTab === 'geral'} icon={LayoutDashboard} onClick={() => setActiveTab('geral')}>Visão Geral</TabButton>
+                                <TabButton active={activeTab === 'lotes'} icon={Database} onClick={() => setActiveTab('lotes')}>Análise por Lote</TabButton>
                                 <TabButton active={activeTab === 'colaborador'} icon={Users} onClick={() => setActiveTab('colaborador')}>Por Colaborador</TabButton>
                                 <TabButton active={activeTab === 'rotas'} icon={MapIcon} onClick={() => setActiveTab('rotas')}>Rotas/Regionais</TabButton>
                                 <TabButton active={activeTab === 'tempo'} icon={TrendingUp} onClick={() => setActiveTab('tempo')}>Evolução</TabButton>
@@ -1167,7 +1399,7 @@ export default function App() {
                                                 <h3 className="text-xl font-bold mb-8 flex items-center gap-2">
                                                     <Clock className="text-brand-purple" /> Distribuição de Horas por Faixa
                                                 </h3>
-                                                <div className="h-[400px] w-full">
+                                                <div id="report-faixas" className="h-[400px] w-full bg-white p-4 rounded-xl">
                                                     <ResponsiveContainer width="100%" height="100%">
                                                         <BarChart data={chartsData.faixas} layout="vertical" margin={{ top: 5, right: 100, left: 20, bottom: 5 }}>
                                                             <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
@@ -1190,7 +1422,7 @@ export default function App() {
                                                     <h3 className="text-lg font-bold mb-6 text-gray-700 flex items-center justify-center gap-2">
                                                         <TrendingUp className="text-green-500" /> Eficiência de Meta (≥ 8hs)
                                                     </h3>
-                                                    <div className="flex flex-col items-center">
+                                                    <div id="report-meta" className="flex flex-col items-center bg-white p-4 rounded-xl">
                                                         <PieChart width={350} height={350}>
                                                             <Pie
                                                                 data={chartsData.meta}
@@ -1231,7 +1463,7 @@ export default function App() {
                                                     <h3 className="text-lg font-bold mb-6 text-gray-700 flex items-center justify-center gap-2">
                                                         <BarChart3 className="text-purple-500" /> Top 10 MRUs Acima da Meta de 08hs
                                                     </h3>
-                                                    <div className="h-[350px] w-full">
+                                                    <div id="report-topmru" className="h-[350px] w-full bg-white p-4 rounded-xl">
                                                         <ResponsiveContainer width="100%" height="100%">
                                                             <BarChart data={chartsData.mrus} layout="vertical" margin={{ top: 5, right: 80, left: 40, bottom: 5 }}>
                                                                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
@@ -1263,13 +1495,71 @@ export default function App() {
                                         </motion.div>
                                     )}
 
+                                    {activeTab === 'lotes' && (
+                                        <motion.div key="lotes" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-12">
+                                            <div>
+                                                <h3 className="text-xl font-bold mb-8 flex items-center gap-2 text-brand-purple uppercase tracking-tight">
+                                                    <BarChart3 /> Total de Horas Líquidas por Lote
+                                                </h3>
+                                                <div id="report-lote-total" className="h-[400px] w-full bg-white p-4 rounded-xl">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <BarChart data={(chartsData as any).lotes.totais} margin={{ top: 20, right: 30, left: 20, bottom: 40 }}>
+                                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                                                            <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 600 }} />
+                                                            <YAxis tick={{ fontSize: 11 }} />
+                                                            <Tooltip
+                                                                cursor={{ fill: '#f8f9fa' }}
+                                                                contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                                                formatter={((val: number) => [decimalToTime(val), 'Total Horas']) as any}
+                                                            />
+                                                            <Bar dataKey="total" radius={[6, 6, 0, 0]} barSize={35}>
+                                                                <LabelList dataKey="time" position="top" style={{ fontSize: '10px', fill: '#475569', fontWeight: 700 }} />
+                                                                {((chartsData as any).lotes.totais || []).map((entry: any, index: number) => (
+                                                                    <Cell key={`cell-${index}`} fill={['#667eea', '#764ba2', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6'][index % 8]} />
+                                                                ))}
+                                                            </Bar>
+                                                        </BarChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                            </div>
+
+                                            <div className="pt-12 border-t">
+                                                <h3 className="text-xl font-bold mb-8 flex items-center gap-2 text-indigo-500 uppercase tracking-tight">
+                                                    <Clock /> Média de Horas por Lote
+                                                </h3>
+                                                <div id="report-lote-media" className="h-[400px] w-full bg-white p-4 rounded-xl">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <BarChart data={(chartsData as any).lotes.media} margin={{ top: 20, right: 30, left: 20, bottom: 40 }}>
+                                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                                                            <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 600 }} />
+                                                            <YAxis tick={{ fontSize: 11 }} />
+                                                            <Tooltip
+                                                                cursor={{ fill: '#f8f9fa' }}
+                                                                contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                                            />
+                                                            <Bar name="Média de Horas" dataKey="avg" radius={[6, 6, 0, 0]} barSize={35}>
+                                                                <LabelList dataKey="time" position="top" style={{ fontSize: '11px', fill: '#64748b', fontWeight: 700 }} />
+                                                                {(chartsData.lotes.media || []).map((_, index) => (
+                                                                    <Cell key={`cell-${index}`} fill={['#667eea', '#764ba2', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#6366f1', '#f43f5e'][index % 10]} />
+                                                                ))}
+                                                            </Bar>
+                                                        </BarChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                                <p className="text-xs text-gray-400 mt-4 italic text-center">
+                                                    * Este gráfico mostra a média de horas produtivas para cada lote.
+                                                </p>
+                                            </div>
+                                        </motion.div>
+                                    )}
+
                                     {activeTab === 'rotas' && (
                                         <motion.div key="rotas" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
                                             <div className="grid grid-cols-1 gap-4">
                                                 {/* GRÁFICO: ROTAS DO AGRESTE */}
                                                 <div className="bg-gray-50/50 p-4 rounded-2xl border border-gray-100 mb-0">
                                                     <h3 className="text-lg font-bold mb-3 text-emerald-500 border-l-4 border-emerald-500 pl-3 uppercase tracking-tight">Média de Horas por Rota - Região Agreste</h3>
-                                                    <div className="h-[350px]">
+                                                    <div id="report-rotas-agreste" className="h-[350px] bg-white p-2 rounded-xl">
                                                         <ResponsiveContainer width="100%" height="100%">
                                                             <BarChart data={chartsData.agreste} margin={{ top: 10, right: 20, left: 10, bottom: 60 }}>
                                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -1294,7 +1584,7 @@ export default function App() {
                                                 {/* GRÁFICO: ROTAS DO SERTÃO */}
                                                 <div className="bg-gray-50/50 p-4 rounded-2xl border border-gray-100 mb-0">
                                                     <h3 className="text-lg font-bold mb-3 text-amber-500 border-l-4 border-amber-500 pl-3 uppercase tracking-tight">Média de Horas por Rota - Região Sertão</h3>
-                                                    <div className="h-[350px]">
+                                                    <div id="report-rotas-sertao" className="h-[350px] bg-white p-2 rounded-xl">
                                                         <ResponsiveContainer width="100%" height="100%">
                                                             <BarChart data={chartsData.sertao} margin={{ top: 10, right: 20, left: 10, bottom: 60 }}>
                                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -1319,7 +1609,7 @@ export default function App() {
                                                 {/* REGIONAIS (ABAIXO) */}
                                                 <div className="bg-gray-50/50 p-4 rounded-2xl border border-gray-100">
                                                     <h3 className="text-lg font-bold mb-3 text-pink-500 border-l-4 border-pink-500 pl-3 uppercase tracking-tight">Média de Horas por Regional</h3>
-                                                    <div className="h-[300px]">
+                                                    <div id="report-regionais" className="h-[300px] bg-white p-2 rounded-xl">
                                                         <ResponsiveContainer width="100%" height="100%">
                                                             <BarChart data={chartsData.regionais} margin={{ top: 10, right: 20, left: 10, bottom: 40 }}>
                                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -1350,7 +1640,7 @@ export default function App() {
                                                 <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-brand-purple uppercase tracking-tight">
                                                     <Users size={20} /> Média por Colaborador
                                                 </h3>
-                                                <div className="h-[600px]">
+                                                <div id="report-colaboradores" className="h-[600px] bg-white p-4 rounded-xl">
                                                     <ResponsiveContainer width="100%" height="100%">
                                                         <BarChart data={chartsData.colaboradores} margin={{ top: 20, right: 30, left: 20, bottom: 120 }}>
                                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
@@ -1391,7 +1681,7 @@ export default function App() {
                                                     <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-brand-purple">
                                                         <TrendingUp /> Evolução da Média de Horas Líquidas ao Longo do Tempo
                                                     </h3>
-                                                    <div className="h-[400px]">
+                                                    <div id="report-evolucao" className="h-[400px] bg-white p-4 rounded-xl">
                                                         <ResponsiveContainer width="100%" height="100%">
                                                             <LineChart data={chartsData.evolucao} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
                                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
@@ -1422,7 +1712,7 @@ export default function App() {
                                                     <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-gray-700">
                                                         <Clock /> Frequência de Trabalho por Dia e Semana
                                                     </h3>
-                                                    <div className="h-[400px]">
+                                                    <div id="report-frequencia" className="h-[400px] bg-white p-4 rounded-xl">
                                                         <ResponsiveContainer width="100%" height="100%">
                                                             <BarChart data={chartsData.frequencia} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
                                                                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
@@ -1492,6 +1782,7 @@ export default function App() {
                                                             <th className="px-4 py-4 whitespace-nowrap min-w-[150px]">Rota</th>
                                                             <th className="px-4 py-4 whitespace-nowrap min-w-[150px]">Regional</th>
                                                             <th className="px-4 py-4 whitespace-nowrap w-[100px]">MRU</th>
+                                                            <th className="px-4 py-4 whitespace-nowrap w-[80px]">Lote</th>
                                                             <th className="px-4 py-4 whitespace-nowrap w-[80px]">Reg.</th>
                                                             <th className="px-4 py-4 whitespace-nowrap w-[110px]">Início (L)</th>
                                                             <th className="px-4 py-4 whitespace-nowrap w-[110px]">Fim (L)</th>
@@ -1508,6 +1799,7 @@ export default function App() {
                                                                 <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{row.rota}</td>
                                                                 <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{row.regional}</td>
                                                                 <td className="px-4 py-3 text-sm font-mono text-brand-purple whitespace-nowrap font-bold">{row.mru}</td>
+                                                                <td className="px-4 py-3 text-sm font-bold text-gray-500 whitespace-nowrap">{row.lote}</td>
                                                                 <td className="px-4 py-3 text-sm font-bold text-gray-700 whitespace-nowrap">
                                                                     <span className="bg-gray-100 px-2 py-0.5 rounded text-[10px]">{row.registros}</span>
                                                                 </td>
@@ -1552,7 +1844,8 @@ export default function App() {
                             </div>
                         </div>
                     </div>
-                )}
+                )
+                }
 
                 <AnimatePresence>
                     {showSuccessModal && uploadStats && (
@@ -1573,7 +1866,210 @@ export default function App() {
                     }}
                     onCancel={() => setShowDeleteModal(false)}
                 />
-            </main>
-        </div>
+
+                {/* AREA DE CAPTURA OCULTA PARA RELATÓRIOS (Sempre no DOM) */}
+                <div style={{ position: 'fixed', left: '-10000px', top: '0', width: '1600px', backgroundColor: 'white' }}>
+                    <div id="capture-faixas" style={{ padding: '60px', background: 'white', width: '1600px' }}>
+                        <h3 style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '30px', color: '#334155' }}>Distribuição de Horas por Faixa</h3>
+                        <div style={{ height: '600px', width: '1400px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartsData.faixas} layout="vertical" margin={{ top: 5, right: 100, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
+                                    <XAxis type="number" hide />
+                                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 14, fontWeight: 500 }} axisLine={false} tickLine={false} />
+                                    <Bar dataKey="total" radius={[0, 6, 6, 0]} barSize={30}>
+                                        <LabelList dataKey="label" position="right" style={{ fontSize: '14px', fill: '#64748b' }} />
+                                        {chartsData.faixas.map((entry: any, index: number) => (
+                                            <Cell key={`cell-${index}`} fill={entry.fill} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-meta" style={{ padding: '60px', background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', width: '1600px' }}>
+                        <h3 style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '30px', color: '#334155' }}>Eficiência de Meta (8hs+)</h3>
+                        <PieChart width={600} height={400}>
+                            <Pie data={chartsData.meta} cx="50%" cy="50%" innerRadius={100} outerRadius={150} paddingAngle={5} dataKey="value" stroke="none">
+                                {chartsData.meta.map((entry: any, index: number) => (
+                                    <Cell key={`cell-${index}`} fill={entry.name === 'Dentro da Meta' ? '#10b981' : '#ef4444'} />
+                                ))}
+                                <LabelList dataKey="value" position="outside" offset={20} fill="#64748b" fontSize={16} formatter={(val: number) => `${((val / (chartsData.meta.reduce((a: any, b: any) => a + b.value, 0)) * 100).toFixed(0))}%`} />
+                            </Pie>
+                        </PieChart>
+                    </div>
+
+                    <div id="capture-topmru" style={{ padding: '60px', background: 'white', width: '1600px' }}>
+                        <h3 style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '30px', color: '#334155' }}>Top 10 MRUs Acima da Meta</h3>
+                        <div style={{ height: '600px', width: '1400px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartsData.mrus} layout="vertical" margin={{ top: 5, right: 100, left: 20, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
+                                    <XAxis type="number" hide />
+                                    <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 14, fontWeight: 500 }} axisLine={false} tickLine={false} />
+                                    <Bar dataKey="valor" radius={[0, 6, 6, 0]} barSize={30}>
+                                        <LabelList dataKey="time" position="right" style={{ fontSize: '14px', fill: '#64748b' }} />
+                                        {chartsData.mrus.map((entry: any, index: number) => (
+                                            <Cell key={`cell-${index}`} fill={['#667eea', '#764ba2', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#db2777', '#d97706', '#059669'][index % 10]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-lote-total" style={{ padding: '60px', background: 'white', width: '2000px' }}>
+                        <h3 style={{ fontSize: '36px', fontWeight: 'bold', marginBottom: '40px', color: '#1e293b', textAlign: 'center' }}>Total de Horas Líquidas por Lote</h3>
+                        <div style={{ height: '700px', width: '1900px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={(chartsData as any)?.lotes?.totais || []} margin={{ top: 50, right: 30, left: 30, bottom: 80 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                    <XAxis dataKey="name" tick={{ fontSize: 14, fontWeight: 800, fill: '#334155' }} interval={0} angle={-45} textAnchor="end" height={100} />
+                                    <YAxis tick={{ fontSize: 14 }} />
+                                    <Bar dataKey="total" radius={[6, 6, 0, 0]} barSize={50}>
+                                        <LabelList dataKey="time" position="top" style={{ fontSize: '12px', fill: '#475569', fontWeight: 700 }} />
+                                        {((chartsData as any).lotes.totais || []).map((entry: any, index: number) => (
+                                            <Cell key={`cell-${index}`} fill={['#667eea', '#764ba2', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6'][index % 8]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-lote-media" style={{ padding: '60px', background: 'white', width: '2000px' }}>
+                        <h3 style={{ fontSize: '36px', fontWeight: 'bold', marginBottom: '40px', color: '#1e293b', textAlign: 'center' }}>Média de Horas por Lote</h3>
+                        <div style={{ height: '700px', width: '1900px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={(chartsData as any)?.lotes?.media || []} margin={{ top: 50, right: 30, left: 30, bottom: 80 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                    <XAxis dataKey="name" tick={{ fontSize: 14, fontWeight: 800, fill: '#334155' }} interval={0} angle={-45} textAnchor="end" height={100} />
+                                    <YAxis tick={{ fontSize: 14 }} />
+                                    <Bar name="Média de Horas" dataKey="avg" radius={[6, 6, 0, 0]} barSize={50}>
+                                        <LabelList dataKey="time" position="top" style={{ fontSize: '14px', fill: '#64748b', fontWeight: 700 }} />
+                                        {(chartsData.lotes.media || []).map((_, index) => (
+                                            <Cell key={`cell-${index}`} fill={['#667eea', '#764ba2', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#6366f1', '#f43f5e'][index % 10]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-rotas-agreste" style={{ padding: '60px', background: 'white', width: '1600px' }}>
+                        <h3 style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '30px', color: '#334155' }}>Médias por Rota - Região Agreste</h3>
+                        <div style={{ height: '600px', width: '1500px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartsData.agreste} margin={{ top: 40, right: 20, left: 10, bottom: 80 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                    <XAxis dataKey="name" angle={-45} textAnchor="end" interval={0} height={100} tick={{ fontSize: 11, fontWeight: 700 }} />
+                                    <YAxis tick={{ fontSize: 12 }} />
+                                    <Bar dataKey="avg" radius={[6, 6, 0, 0]} barSize={25}>
+                                        <LabelList dataKey="time" position="top" style={{ fontSize: '10px', fill: '#475569', fontWeight: 700 }} />
+                                        {chartsData.agreste.map((_, index) => (
+                                            <Cell key={`cell-${index}`} fill={['#10b981', '#059669', '#047857', '#34d399', '#065f46', '#22c55e', '#16a34a', '#15803d', '#14532d', '#4ade80'][index % 10]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-rotas-sertao" style={{ padding: '60px', background: 'white', width: '1600px' }}>
+                        <h3 style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '30px', color: '#334155' }}>Médias por Rota - Região Sertão</h3>
+                        <div style={{ height: '600px', width: '1500px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartsData.sertao} margin={{ top: 40, right: 20, left: 10, bottom: 80 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                    <XAxis dataKey="name" angle={-45} textAnchor="end" interval={0} height={100} tick={{ fontSize: 11, fontWeight: 700 }} />
+                                    <YAxis tick={{ fontSize: 12 }} />
+                                    <Bar dataKey="avg" radius={[6, 6, 0, 0]} barSize={25}>
+                                        <LabelList dataKey="time" position="top" style={{ fontSize: '10px', fill: '#475569', fontWeight: 700 }} />
+                                        {chartsData.sertao.map((_, index) => (
+                                            <Cell key={`cell-${index}`} fill={['#f59e0b', '#d97706', '#b45309', '#fcc137', '#fbbf24', '#78350f', '#f59e0b', '#fb923c', '#ea580c', '#c2410c'][index % 10]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-regionais" style={{ padding: '60px', background: 'white', width: '1600px' }}>
+                        <h3 style={{ fontSize: '32px', fontWeight: 'bold', marginBottom: '30px', color: '#334155' }}>Média de Horas por Regional</h3>
+                        <div style={{ height: '600px', width: '1400px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartsData.regionais} margin={{ top: 20, right: 20, left: 10, bottom: 40 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                    <XAxis dataKey="name" tick={{ fontSize: 14, fontWeight: 700 }} interval={0} />
+                                    <YAxis tick={{ fontSize: 12 }} />
+                                    <Bar dataKey="avg" radius={[6, 6, 0, 0]} barSize={60}>
+                                        <LabelList dataKey="time" position="top" style={{ fontSize: '12px', fill: '#475569', fontWeight: 700 }} />
+                                        {chartsData.regionais.map((_, index) => (
+                                            <Cell key={`cell-${index}`} fill={['#ec4899', '#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16', '#6366f1', '#f43f5e'][index % 10]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-colaboradores" style={{ padding: '80px', background: 'white', width: '1800px' }}>
+                        <h3 style={{ fontSize: '42px', fontWeight: 'bold', marginBottom: '50px', color: '#1e293b', textAlign: 'center' }}>Média de Horas por Colaborador</h3>
+                        <div style={{ height: '1000px', width: '1700px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartsData.colaboradores} margin={{ top: 80, right: 40, left: 40, bottom: 250 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={250} interval={0} tick={{ fontSize: 22, fontWeight: 700, fill: '#1e293b' }} />
+                                    <YAxis tick={{ fontSize: 20 }} />
+                                    <Bar dataKey="avg" radius={[12, 12, 0, 0]} barSize={60}>
+                                        <LabelList dataKey="time" position="top" offset={20} style={{ fontSize: '20px', fill: '#1e293b', fontWeight: 800 }} />
+                                        {chartsData.colaboradores.map((_, index) => (
+                                            <Cell key={`cell-${index}`} fill={['#667eea', '#764ba2', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6'][index % 8]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-evolucao" style={{ padding: '40px', background: 'white' }}>
+                        <h3 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '20px' }}>Evolução da Média de Horas</h3>
+                        <div style={{ height: '500px', width: '1100px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={chartsData.evolucao} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                                    <XAxis dataKey="date" tick={{ fontSize: 14 }} />
+                                    <YAxis tick={{ fontSize: 14 }} />
+                                    <ReferenceLine y={8} stroke="red" strokeDasharray="3 3" label={{ position: 'top', value: 'Meta 08:00:00', fill: 'red' }} />
+                                    <Line type="monotone" dataKey="avg" stroke="#8b5cf6" strokeWidth={4} dot={{ r: 6, fill: '#8b5cf6' }}>
+                                        <LabelList dataKey="time" position="top" offset={15} style={{ fontSize: '12px', fill: '#64748b' }} />
+                                    </Line>
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div id="capture-frequencia" style={{ padding: '40px', background: 'white' }}>
+                        <h3 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '20px' }}>Frequência de Trabalho (Dia/Semana)</h3>
+                        <div style={{ height: '500px', width: '1100px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={chartsData.frequencia} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
+                                    <XAxis type="number" hide />
+                                    <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 14 }} />
+                                    <Bar dataKey="avg" radius={[0, 6, 6, 0]} barSize={40}>
+                                        <LabelList dataKey="time" position="right" style={{ fontSize: '14px', fill: '#64748b' }} />
+                                        {chartsData.frequencia.map((_, index) => (
+                                            <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#764ba2' : '#f59e0b'} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                </div>
+            </main >
+        </div >
     );
 }
