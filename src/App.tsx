@@ -1536,6 +1536,7 @@ export default function App() {
                                                             <Tooltip
                                                                 cursor={{ fill: '#f8f9fa' }}
                                                                 contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                                                formatter={((val: number) => [decimalToTime(val), 'Média de Horas']) as any}
                                                             />
                                                             <Bar name="Média de Horas" dataKey="avg" radius={[6, 6, 0, 0]} barSize={35}>
                                                                 <LabelList dataKey="time" position="top" style={{ fontSize: '11px', fill: '#64748b', fontWeight: 700 }} />
@@ -1946,6 +1947,10 @@ export default function App() {
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                                     <XAxis dataKey="name" tick={{ fontSize: 14, fontWeight: 800, fill: '#334155' }} interval={0} angle={-45} textAnchor="end" height={100} />
                                     <YAxis tick={{ fontSize: 14 }} />
+                                    <Tooltip
+                                        cursor={{ fill: '#f8f9fa' }}
+                                        formatter={((val: number) => [decimalToTime(val), 'Média de Horas']) as any}
+                                    />
                                     <Bar name="Média de Horas" dataKey="avg" radius={[6, 6, 0, 0]} barSize={50}>
                                         <LabelList dataKey="time" position="top" style={{ fontSize: '14px', fill: '#64748b', fontWeight: 700 }} />
                                         {(chartsData.lotes.media || []).map((_, index) => (
